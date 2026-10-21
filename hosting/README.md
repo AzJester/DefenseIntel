@@ -4,7 +4,7 @@ This Node.js 22.13+ adapter serves only the intelligence app at `intel.insightfu
 
 ## Build and start
 
-Run `npm ci --include=dev` and `npm run build` from this repository. The in-repository build reads authored `lib/` files, preserves `public/` and the Drizzle journal in place, and transpiles five business modules into `server/`. Generated server files and their hash manifest are committed so runtime-only installations can run `npm start`; rebuilding requires the pinned TypeScript development dependency. Cloudflare database imports are redirected to `hosting/runtime.mjs`; local imports gain `.js`, and JSON seeds use Node JSON import attributes. The pinned `mysql2` runtime dependency comes from the npm registry.
+Run `npm ci --omit=dev` and `npm run build` from this repository, matching GoDaddy's production-only installation. The pinned TypeScript compiler is in `dependencies` so it remains available during that build. The in-repository build reads authored `lib/` files, preserves `public/` and the Drizzle journal in place, and transpiles five business modules into `server/`. Generated server files and their hash manifest are included. Cloudflare database imports are redirected to `hosting/runtime.mjs`; local imports gain `.js`, and JSON seeds use Node JSON import attributes. The pinned `mysql2` runtime dependency comes from the public npm registry specified in `.npmrc`.
 
 After building, start with `node hosting/server.mjs`. The package layout is:
 
@@ -18,6 +18,8 @@ After building, start with `node hosting/server.mjs`. The package layout is:
 ## Production configuration
 
 Supply configuration through the hosting platform's private secret/environment settings. There are no default accounts, passwords, session keys, database credentials, or public bypass tokens.
+
+Code can be uploaded before owner secrets are entered in the hosting UI. The build reads no database or authentication secrets. Startup deliberately stops if required settings are missing, before business bootstrap or collection. GoDaddy's managed database injects the five `DB_*` connection variables below. Set preview `PUBLIC_ORIGIN` to the actual app origin used by the browser; switch the production variant to the intended custom origin only at cutover. Keep the preview scheduler disabled.
 
 | Variable | Purpose |
 | --- | --- |

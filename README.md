@@ -11,16 +11,16 @@ The intended private app hostname is `intel.insightfuldefense.com`. Domain conne
 Use Node.js 22.13 or later:
 
 ```
-npm ci --include=dev
+npm ci --omit=dev
 npm run build
 npm test
 ```
 
-The build compiles the authored `lib/` business modules into generated `server/` files and leaves `public/`, `drizzle/` and source files in place. Generated server files and their hash manifest are included so `npm start` also works on a host that installs runtime dependencies only. Rebuild after source changes and review the generated changes together. A build phase must install development dependencies so the pinned TypeScript compiler is available. Runtime uses the pinned `mysql2` dependency. `db/schema.ts` documents the original schema; the checked-in Drizzle SQL journal controls database creation.
+The build compiles the authored `lib/` business modules into generated `server/` files and leaves `public/`, `drizzle/` and source files in place. Generated server files and their hash manifest are included. Rebuild after source changes and review the generated changes together. The pinned TypeScript compiler is in production dependencies because GoDaddy builds after a production-only install. Runtime uses the pinned `mysql2` dependency. The public npm registry is fixed in `.npmrc`. `db/schema.ts` documents the original schema; the checked-in Drizzle SQL journal controls database creation.
 
 ## Private hosting and migration
 
-Production requires managed MySQL, HTTPS, an explicit owner account and session secret. Configure the values described in [.env.example](.env.example) through the host's secret store. The server never loads an account or secret from a public asset. See the detailed [hosting guide](hosting/README.md) for certificate validation, migrations, authenticated APIs, backups and local SQLite testing.
+Production requires managed MySQL, HTTPS, an explicit owner account and session secret. Configure the values described in [.env.example](.env.example) through the host's secret store. GoDaddy injects the managed database's `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER` and `DB_PASSWORD`. Owner credentials and the session secret can be entered in the hosting UI after the code upload. A build can succeed with those owner settings absent, but the app intentionally refuses startup without them and never seeds the workspace before owner authentication configuration is valid. The server never loads an account or secret from a public asset. See the detailed [hosting guide](hosting/README.md) for certificate validation, migrations, authenticated APIs, backups and local SQLite testing.
 
 For the first deployment, keep `IMPORT_REQUIRED=true` and `ENABLE_SCHEDULER=false`. The app will allow owner sign-in and a private import screen, while bootstrap, workspace data routes and collection remain disabled. Transfer the owner-only `/api/backup` export into the empty managed database, either through the authenticated import screen (20 MB maximum) or the offline importer (100 MB maximum). The importer validates the ten supported tables, refuses existing data, commits all imported rows and its completion marker atomically, and reports counts only. Restart or redeploy after a successful import. Verify the restored competitor directory, planning data, source versions and saved reports before enabling the new scheduler and disabling the old one.
 

@@ -1,5 +1,5 @@
 {
-  "createdAt": "2026-10-21T18:02:44.935Z",
+  "createdAt": "2026-10-21T18:10:31.382Z",
   "node": ">=22.13.0",
   "modules": {
     "workspace.ts": "3c0070389f7f514e12141420a29e9333eedf0fe076c88c3d8a7ad2e2e8e17f0a",
