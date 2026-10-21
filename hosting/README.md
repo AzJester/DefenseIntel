@@ -1,6 +1,6 @@
 # Private intelligence hosting adapter
 
-This Node.js 22.13+ adapter serves only the intelligence app at `intel.insightfuldefense.com`. It does not change the editorial apex website or DNS. Production uses managed MySQL through the official [mysql2 package](https://sidorares.github.io/node-mysql2/docs). SQLite is retained for local development and tests. Do not store private databases, backups, passwords, or secrets under `public/` or `public/assets/`.
+This Node.js 22.13+ adapter serves the intelligence app on its configured origin, with `intel.insightfuldefense.com` as the intended production hostname. It does not change the editorial apex website or DNS. Production uses managed MySQL through the official [mysql2 package](https://sidorares.github.io/node-mysql2/docs). SQLite is retained for local development and tests. Do not store private databases, backups, passwords, or secrets under `public/` or `public/assets/`.
 
 ## Build and start
 
@@ -17,27 +17,29 @@ After building, start with `node hosting/server.mjs`. The package layout is:
 
 ## Production configuration
 
-Supply configuration through the hosting platform's private secret/environment settings. There are no default accounts, passwords, session keys, database credentials, or public bypass tokens.
+Supply configuration through the hosting platform's private secret/environment settings. There are no default accounts, passwords, session keys, database credentials, or public bypass tokens. Select one of the access modes below.
 
-Code can be uploaded before owner secrets are entered in the hosting UI. The build reads no database or authentication secrets. Startup deliberately stops if required settings are missing, before business bootstrap or collection. GoDaddy's managed database injects the five `DB_*` connection variables below. Set preview `PUBLIC_ORIGIN` to the actual app origin used by the browser; switch the production variant to the intended custom origin only at cutover. Keep the preview scheduler disabled.
+Code can be uploaded before runtime settings are entered in the hosting UI. The build reads no database or authentication secrets. Startup deliberately stops if the selected access mode's required settings are missing, before business bootstrap or collection. GoDaddy's managed database injects the five `DB_*` connection variables below. Set preview `PUBLIC_ORIGIN` to the actual app origin used by the browser; configure the production variant's own origin at cutover. Keep the preview scheduler disabled unless it is the one authoritative private collecting process.
 
 | Variable | Purpose |
 | --- | --- |
 | `NODE_ENV` | Set to `production`. Production startup refuses SQLite fallback. |
-| `PUBLIC_ORIGIN` | Exactly `https://intel.insightfuldefense.com`. Every POST must match this Origin. |
+| `ACCESS_MODE` | `owner-password` (default if unset), `godaddy-private-preview`, or `public`. See the access boundaries below. |
+| `PUBLIC_ORIGIN` | Exactly one HTTPS browser origin. Every permitted POST must match it. Preview mode requires the actual `https://<single-label>.preview.c38.airoapp.ai` origin; production may use `https://intel.insightfuldefense.com` in owner-password or public mode. |
+| `PRIVATE_PREVIEW_URL` | Optional owner-editor link returned with workspace access metadata. Must be a GoDaddy private-preview HTTPS origin. |
 | `DATABASE_URL` | Full `mysql://user:encoded-password@host:3306/database` URL. Alternatively use all four `DB_HOST`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` variables. |
 | `DB_HOST`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` | Managed MySQL connection details when `DATABASE_URL` is not supplied. |
 | `DB_PORT` | Optional port, default 3306. |
 | `DB_SSL_CA` | Optional private CA PEM when the provider requires its own trust chain. Remote TLS always verifies the certificate chain and hostname. |
 | `DB_TLS_SERVERNAME` | Optional provider-confirmed DNS identity for verified TLS through a loopback `DB_HOST` proxy. TCP still uses the injected host/port. Refused for remote transport or disabled TLS. |
-| `ADMIN_EMAIL` | The single owner's sign-in address. |
-| `ADMIN_PASSWORD_HASH` | Preferred verifier: `scrypt$N$r$p$saltBase64url$keyBase64url`. Generate using `node hosting/password-hash.mjs` with the password entered through hidden stdin. |
-| `ADMIN_PASSWORD` | Alternative host secret of at least 16 bytes. Set this or the hash, never both. Plaintext mode intentionally invalidates sessions on each restart. |
-| `SESSION_SECRET` | At least 32 bytes of random secret material. Keep stable across ordinary restarts; rotation invalidates all sessions. |
+| `ADMIN_EMAIL` | Owner-password mode only: the single owner's sign-in address. |
+| `ADMIN_PASSWORD_HASH` | Owner-password mode only. Preferred verifier: `scrypt$N$r$p$saltBase64url$keyBase64url`. Generate using `node hosting/password-hash.mjs` with the password entered through hidden stdin. |
+| `ADMIN_PASSWORD` | Owner-password mode only. Alternative host secret of at least 16 bytes. Set this or the hash, never both. Plaintext mode intentionally invalidates sessions on each restart. |
+| `SESSION_SECRET` | Owner-password mode only. At least 32 bytes of random secret material. Keep stable across ordinary restarts; rotation invalidates all sessions. |
 | `PORT` | Runtime port supplied by the host. Defaults to 3000 for manual use. |
 | `HOST` | Bind interface, default `0.0.0.0` in production. |
-| `ENABLE_SCHEDULER` | Enabled by default. Set exactly `false` where collection must not run. |
-| `IMPORT_REQUIRED` | Set `true` on first deployment to prevent bootstrap, app data access and scheduling until the owner backup has imported and the server restarts. |
+| `ENABLE_SCHEDULER` | Set exactly `false` for the public variant and every nonauthoritative preview. Enable only the one authoritative private collecting process. |
+| `IMPORT_REQUIRED` | Set `true` on first deployment to prevent bootstrap, app data access and scheduling until the owner backup has imported and the server restarts. Pending public mode fails closed without an import screen. |
 
 MySQL connections use a bounded promise pool, parameter binding, disabled multi-statements, UTF-8 and verified TLS. Remote certificate/hostname verification cannot be disabled. `DB_SSL_MODE=disable` is supported only for a loopback database in local tests. A failed connection or migration stops startup rather than falling back to a local file.
 
@@ -45,7 +47,19 @@ A managed database may inject `DB_HOST=localhost` while its TLS certificate iden
 
 GoDaddy [documents that preview and production share the app's database](https://www.godaddy.com/resources/news/deploy-a-node-js-app-to-godaddy-from-your-terminal-or-let-your-coding-agent-do-it). Treat preview as access to production data. Disable its scheduler, prevent concurrent collection/imports, and use a separate database for destructive tests. Never assume a preview is an isolated copy. Confirm the provider's TLS/CA details and run a live connection/schema smoke test before switching the production hostname.
 
-Terminate HTTPS at the trusted host proxy. Forwarded host/protocol headers are not trusted; the configured origin is authoritative. Sessions are HMAC signed, expire after eight hours, and retain a hashed server-side identifier so sign-out revokes them. Cookies are host-only, Secure, HttpOnly and SameSite=Strict. Rotating the owner credentials or session secret invalidates old sessions.
+## Access boundaries
+
+`ACCESS_MODE=owner-password`, or an unset mode, retains the app's owner authentication. Configure `ADMIN_EMAIL`, exactly one of `ADMIN_PASSWORD_HASH` or `ADMIN_PASSWORD`, and `SESSION_SECRET`. Sessions are HMAC signed, expire after eight hours, and retain a hashed server-side identifier so sign-out revokes them. Cookies are host-only, Secure, HttpOnly and SameSite=Strict. Rotating the owner credentials or session secret invalidates old sessions.
+
+`ACCESS_MODE=godaddy-private-preview` omits the additional app password and session-secret requirement. Its owner authority comes entirely from the existing GoDaddy account-gated private-preview gateway. `PUBLIC_ORIGIN` must be exactly one HTTPS origin whose host is a single label followed by `.preview.c38.airoapp.ai`; custom domains, deeper subdomains and ordinary public hosts are refused. The incoming Host must match that configured origin; forwarded host headers cannot override it. All owner workspace editing, collection, imports and backup routes are available behind that gateway, with exact-Origin and process-random CSRF checks on POSTs. This mode must never be exposed through a public proxy or another route that bypasses GoDaddy's account gate. The application does not independently authenticate the GoDaddy account. Verify the provider preserves the preview Host before using it.
+
+`ACCESS_MODE=public` allows public GET access to app assets and workspace data. It denies shared-data mutations, manual collection, ingest, imports and backups. A validated `brief_snapshot` request returns an ephemeral report/presentation payload without inserting a saved snapshot or changing shared data. Existing saved snapshots can be read through `snapshot_get`; the startup `bootstrap` POST is a no-op. Public export/read POSTs require the exact configured Origin. The internal scheduler may run when explicitly configured as the one authoritative collector; public visitors cannot trigger collection. Existing records, notes, planning data and findings returned by the workspace become readable by public visitors. Review that shared content before selecting public mode.
+
+`GET /api/workspace` includes `access: {mode,readOnly,editorUrl}`. `GET /auth/session` reports those access fields, with a CSRF token only for writable modes. The client bridge presents no app sign-in or sign-out control in managed preview or public mode.
+
+Passwordless modes expose a process-random CSRF token through the app's same-origin bridge. The token protects permitted POST integrity; it does not establish owner identity. Restarting the process invalidates existing page tokens, so reload the workspace after a restart. No `ADMIN_*` or `SESSION_SECRET` values are required in these two modes.
+
+Terminate HTTPS at the trusted host proxy. Forwarded host/protocol headers are not trusted; the configured origin is authoritative. Every permitted app data POST, including temporary public exports, requires the exact configured Origin and the applicable `X-CSRF-Token`. Password sign-in instead uses its form's CSRF challenge. Preview owner edits and public visitors may share the same managed database; public read-only access does not create a separate copy.
 
 ## Local development
 
@@ -55,17 +69,17 @@ For local HTTP browser testing, set `ALLOW_INSECURE_LOCALHOST=true` and a `http:
 
 ## Private routes and scheduling
 
-`GET /healthz` returns only `{"status":"ok"}`. Every app asset and data route requires sign-in. `/auth/login` supplies the owner form. An authenticated `/auth/session` returns the CSRF token. A first-party bridge is injected into the HTML response to add that token to the app's existing fetch calls and provide sign-out, without changing app source files.
+`GET /healthz` returns only `{"status":"ok"}`. Owner-password mode protects assets and data with sign-in; `/auth/login` supplies the form and `/auth/session` returns the session CSRF token. Private-preview mode relies on GoDaddy's account gate, and public mode serves read-only content without app sign-in. The first-party bridge supplies the correct CSRF token for the selected mode and adds it to permitted app requests. Sign-out revocation applies to app password sessions.
 
-Authenticated APIs are `/api/workspace` (GET/POST), `/api/refresh` (POST), `/api/ingest` (POST), and `/api/backup` (GET). All POSTs require the exact configured Origin and the session's `X-CSRF-Token`. Backups contain the ten whitelisted app tables; credentials, sessions, scheduler claims and migration ledgers are excluded. During initial `IMPORT_REQUIRED=true` mode, only owner authentication and `POST /api/transfer/import` are available; the private owner import screen accepts up to 20 MB. Workspace, app assets and collection remain gated until import completion and restart.
+Owner APIs are `/api/workspace` (GET/POST), `/api/refresh` (POST), `/api/ingest` (POST), and `/api/backup` (GET). They require password-owner authentication or the restricted private-preview deployment. Public mode permits workspace GET and the temporary validated `brief_snapshot` export exception only; it denies owner backup and shared-data changes. Backups contain the ten whitelisted app tables; credentials, sessions, scheduler claims and migration ledgers are excluded. During initial `IMPORT_REQUIRED=true` mode, only owner access and `POST /api/transfer/import` are available; the private owner import screen accepts up to 20 MB. A public deployment remains unavailable and never presents this import screen. Workspace, app assets and collection remain gated until import completion and restart.
 
-The internal scheduler calls `refresh()` directly at 07:00 and 13:00 America/Phoenix while the Node process is running. Manual refresh, ingest and scheduled collection share a process lock. Database claims prevent duplicate runs of the same scheduled slot, and the business refresh lock is acquired atomically with MySQL `SELECT ... FOR UPDATE`. Run one authoritative collecting deployment. Disable the old Sites schedule only when the new host is verified and becomes authoritative. The timer is unreferenced; the host must keep the app process available for its scheduled times.
+The internal scheduler calls `refresh()` directly at 07:00 and 13:00 America/Phoenix while the authoritative private Node process is running. Manual refresh, ingest and scheduled collection share a process lock. Database claims prevent duplicate runs of the same scheduled slot, and the business refresh lock is acquired atomically with MySQL `SELECT ... FOR UPDATE`. Keep public and nonauthoritative preview collection disabled. Disable the old Sites schedule only when the new host is verified and becomes authoritative. The timer is unreferenced; the host must keep the app process available for its scheduled times.
 
 ## Migrations and one-time data import
 
 Database setup reads the copied Drizzle journal and records each original SQL checksum. MySQL translations use InnoDB, case-sensitive UTF-8, `VARCHAR(250)` primary identifiers and `LONGTEXT` content. A database advisory lock serializes initialization. MySQL DDL auto-commits, so the ledger marks each migration `applying` before DDL and `applied` after completion. An interrupted migration, changed checksum, unknown newer migration, or untracked existing schema stops startup. No migration is replayed automatically. Local SQLite uses transactional migrations plus `PRAGMA user_version`.
 
-To transfer existing data, export `/api/backup` from the authenticated source into a private file outside the repository and public asset directories. Start the destination in `IMPORT_REQUIRED=true` mode and use the authenticated private import screen (20 MB maximum), or stop it and run the offline importer (100 MB maximum):
+To transfer existing data, export `/api/backup` from the owner-access source into a private file outside the repository and public asset directories. Start the destination in `IMPORT_REQUIRED=true` mode with owner-password or restricted private-preview access, then use its private import screen (20 MB maximum), or stop it and run the offline importer (100 MB maximum):
 
     node hosting/import-backup.mjs --input <private-backup-file>
 

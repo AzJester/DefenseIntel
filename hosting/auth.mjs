@@ -5,6 +5,9 @@ const SESSION_SECONDS=8*60*60,LOGIN_SECONDS=15*60;
 const b64=value=>Buffer.from(value).toString('base64url');
 const digest=value=>createHash('sha256').update(value).digest('hex');
 const safeEqual=(a,b)=>{const first=Buffer.from(a),second=Buffer.from(b);return first.length===second.length&&timingSafeEqual(first,second);};
+const PREVIEW_HOST=/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.preview\.c38\.airoapp\.ai$/;
+function previewOrigin(value){let url;try{url=new URL(value);}catch{throw Error('A GoDaddy private preview HTTPS origin is required');}if(url.protocol!=='https:'||url.port||url.username||url.password||url.pathname!=='/'||url.search||url.hash||!PREVIEW_HOST.test(url.hostname))throw Error('A GoDaddy private preview HTTPS origin is required');return url.origin;}
+function originCheck(request,origin){return request.headers.origin===origin&&(!request.headers['sec-fetch-site']||['same-origin','none'].includes(request.headers['sec-fetch-site']));}
 
 export async function hashPassword(password){
   if(typeof password!=='string'||Buffer.byteLength(password)<16||Buffer.byteLength(password)>1024)throw Error('Password must be between 16 and 1024 bytes');
@@ -19,6 +22,21 @@ function parseHash(value){
   return {N,r,p,salt,key};
 }
 export async function createAuth(environment,database){
+  const mode=environment.ACCESS_MODE||'owner-password';
+  if(!['owner-password','godaddy-private-preview','public'].includes(mode))throw Error('ACCESS_MODE must be owner-password, godaddy-private-preview or public');
+  const editorUrl=environment.PRIVATE_PREVIEW_URL?previewOrigin(environment.PRIVATE_PREVIEW_URL):null;
+  if(mode!=='owner-password'){
+    let url;try{url=new URL(environment.PUBLIC_ORIGIN||'');}catch{throw Error('PUBLIC_ORIGIN must be one HTTPS origin');}
+    if(url.protocol!=='https:'||url.username||url.password||url.pathname!=='/'||url.search||url.hash)throw Error('PUBLIC_ORIGIN must be one HTTPS origin');
+    const origin=mode==='godaddy-private-preview'?previewOrigin(environment.PUBLIC_ORIGIN):url.origin,readOnly=mode==='public',csrfToken=readOnly?null:b64(randomBytes(32));
+    const access={mode,readOnly,editorUrl};
+    return {mode,access,origin,local:false,secure:true,email:null,
+      async session(){return {purpose:mode,csrf:csrfToken,exp:null};},
+      sameOrigin:request=>originCheck(request,origin),
+      trustedHost:request=>mode!=='godaddy-private-preview'||request.headers.host===new URL(origin).host,
+      csrf:request=>!readOnly&&typeof request.headers['x-csrf-token']==='string'&&safeEqual(request.headers['x-csrf-token'],csrfToken),
+    };
+  }
   const email=String(environment.ADMIN_EMAIL||'').trim().toLowerCase();
   if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||email.length>254)throw Error('ADMIN_EMAIL is required');
   const secret=environment.SESSION_SECRET;
@@ -56,8 +74,8 @@ export async function createAuth(environment,database){
     return stored&&Number(stored.expires)===value.exp&&stored.owner_version===ownerVersion?value:null;
   }
   return {
-    origin,local,email,secure,session,cookieName:sessionName,
-    sameOrigin(request){return request.headers.origin===origin&&(!request.headers['sec-fetch-site']||['same-origin','none'].includes(request.headers['sec-fetch-site']));},
+    mode,access:{mode,readOnly:false,editorUrl},origin,local,email,secure,session,cookieName:sessionName,trustedHost:()=>true,
+    sameOrigin(request){return originCheck(request,origin);},
     csrf(request,value){return typeof request.headers['x-csrf-token']==='string'&&safeEqual(request.headers['x-csrf-token'],value.csrf);},
     loginPageToken(){const now=Math.floor(Date.now()/1000),value=sign({v:1,purpose:'login',iat:now,exp:now+LOGIN_SECONDS,nonce:b64(randomBytes(24))});return {value,cookie:cookie(loginName,value,LOGIN_SECONDS)};},
     async login(request,form){

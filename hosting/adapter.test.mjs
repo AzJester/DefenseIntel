@@ -9,6 +9,8 @@ import {createAuth,hashPassword} from './auth.mjs';
 import {createApplication,createCollectionLock,startScheduler,phoenixSlot} from './server.mjs';
 import {buildPortable} from './build.mjs';
 import {BACKUP_SCHEMA,importComplete} from './import-backup.mjs';
+import {request as httpRequest} from 'node:http';
+import {runInNewContext} from 'node:vm';
 
 const HERE=fileURLToPath(new URL('.',import.meta.url)),TEMP=await mkdtemp(join(HERE,'.adapter-test-'));
 const PASSWORD='Strong-owner-only-test-password-52!';
@@ -54,6 +56,75 @@ test('Password login enforces challenge, exact origin, rate limits and Secure co
   assert.equal((await auth.login(request(cookiePair(challenge.cookie)),{csrf:'invalid',email:ENV.ADMIN_EMAIL,password:PASSWORD})).status,403);
   for(let i=0;i<5;i++)assert.equal((await auth.login(request(cookiePair(challenge.cookie)),{csrf:challenge.value,email:ENV.ADMIN_EMAIL,password:'incorrect'})).status,401);
   assert.equal((await auth.login(request(cookiePair(challenge.cookie)),{csrf:challenge.value,email:ENV.ADMIN_EMAIL,password:PASSWORD})).status,429);sql.close();
+});
+
+test('Passwordless access modes validate their trust boundary and do not require owner credentials',async()=>{
+  const preview='https://owner-editor.preview.c38.airoapp.ai',environment={ACCESS_MODE:'godaddy-private-preview',PUBLIC_ORIGIN:preview};
+  const auth=await createAuth(environment),session=await auth.session({headers:{}});
+  assert.equal(auth.mode,'godaddy-private-preview');assert.equal(auth.access.readOnly,false);assert.equal(auth.secure,true);assert(session.csrf);assert.equal(auth.login,undefined);
+  assert(auth.trustedHost({headers:{host:new URL(preview).host}}));assert(!auth.trustedHost({headers:{host:'intel.insightfuldefense.com','x-forwarded-host':new URL(preview).host}}));
+  assert(auth.sameOrigin({headers:{origin:preview}}));assert(!auth.sameOrigin({headers:{origin:'https://evil.example.test'}}));assert(auth.csrf({headers:{'x-csrf-token':session.csrf}},session));
+  const restarted=await createAuth(environment);assert(!restarted.csrf({headers:{'x-csrf-token':session.csrf}},session),'process restart rotates managed CSRF');
+  for(const origin of ['https://preview.c38.airoapp.ai','https://a.b.preview.c38.airoapp.ai','https://owner-editor.preview.c38.airoapp.ai.evil.test','http://owner-editor.preview.c38.airoapp.ai','https://owner-editor.preview.c38.airoapp.ai:8443','https://owner-editor.preview.c38.airoapp.ai/path'])await assert.rejects(()=>createAuth({...environment,PUBLIC_ORIGIN:origin}),/HTTPS origin/);
+  const publicAuth=await createAuth({ACCESS_MODE:'public',PUBLIC_ORIGIN:'https://intel.insightfuldefense.com',PRIVATE_PREVIEW_URL:preview});assert.deepEqual(publicAuth.access,{mode:'public',readOnly:true,editorUrl:preview});assert.equal((await publicAuth.session({headers:{}})).csrf,null);assert.equal(publicAuth.login,undefined);
+  await assert.rejects(()=>createAuth({ACCESS_MODE:'public',PUBLIC_ORIGIN:'http://127.0.0.1:3000',ALLOW_INSECURE_LOCALHOST:'true'}),/HTTPS origin/);
+  await assert.rejects(()=>createAuth({ACCESS_MODE:'public',PUBLIC_ORIGIN:'https://intel.example.test',PRIVATE_PREVIEW_URL:'https://evil.example.test'}),/private preview/);
+  await assert.rejects(()=>createAuth({ACCESS_MODE:'typo'}),/ACCESS_MODE/);
+});
+
+test('Browser bridge adds writable-mode CSRF and presents sign-out only for app-password mode',async()=>{
+  const source=await readFile(join(HERE,'client.js'),'utf8'),origin='https://intel.example.test';
+  for(const mode of ['public','godaddy-private-preview','owner-password']){
+    const calls=[],buttons=[],redirects=[],events=new Map(),session={mode,...(mode==='public'?{}:{csrf:'process-test-csrf'})};
+    class BrowserRequest extends Request{constructor(input,options){super(typeof input==='string'?new URL(input,origin):input,options);}}
+    const window={location:{origin,assign:path=>redirects.push(path)},fetch:async(input,options)=>{const request=new BrowserRequest(input,options);calls.push(request);return new Response(JSON.stringify(request.url.endsWith('/auth/session')?session:{ok:true}),{status:200,headers:{'Content-Type':'application/json'}});}};
+    const document={addEventListener:(name,callback)=>events.set(name,callback),querySelector:()=>({append:button=>buttons.push(button)}),createElement:()=>({addEventListener(){}})};
+    runInNewContext(source,{window,document,Request:BrowserRequest,Headers,URL});await events.get('DOMContentLoaded')();
+    assert.equal(buttons.length,mode==='owner-password'?1:0,mode);assert.equal(redirects.length,0);
+    await window.fetch('/api/workspace',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    assert.equal(calls.at(-1).headers.get('X-CSRF-Token'),mode==='public'?null:session.csrf,mode);
+  }
+});
+
+test('Public HTTP mode permits public reads and validated ephemeral exports while preventing shared writes and backups',async()=>{
+  const sql=await database(),publicDirectory=join(TEMP,'public-mode');await mkdir(publicDirectory);await writeFile(join(publicDirectory,'index.html'),'<html><head></head><body>Public workspace</body></html>');await writeFile(join(publicDirectory,'app.js'),'console.log("public app");');
+  let bootstraps=0,mutations=0,refreshes=0;const record={id:'evidence-one',company:'Leidos',title:'Canonical source title',url:'https://example.test/source'};
+  const business={async bootstrap(){bootstraps++;},async workspace(){return {records:[record]};},async mutate(value){assert.equal(value.action,'snapshot_get');mutations++;return {ok:true,snapshot:{id:value.id,title:'Public saved report'}};},async refresh(){refreshes++;return {status:'ok'};},async persistCollection(){throw Error('Public ingest must not run');}};
+  const environment={ACCESS_MODE:'public',PUBLIC_ORIGIN:'https://intel.insightfuldefense.com',PRIVATE_PREVIEW_URL:'https://owner-editor.preview.c38.airoapp.ai',ENABLE_SCHEDULER:'false'};
+  const app=await createApplication({environment,runtime:{database:sql},publicDirectory,business}),address=await app.listen(0,'127.0.0.1'),base='http://127.0.0.1:'+address.port;
+  const post=value=>fetch(base+'/api/workspace',{method:'POST',headers:{Origin:environment.PUBLIC_ORIGIN,'Content-Type':'application/json'},body:JSON.stringify(value)});
+  try{
+    const session=await(await fetch(base+'/auth/session')).json();assert.equal(session.mode,'public');assert.equal(session.readOnly,true);assert.equal(session.csrf,undefined);assert.equal(session.email,undefined);
+    assert.equal((await fetch(base+'/auth/login',{redirect:'manual'})).status,404);assert.equal((await fetch(base+'/app.js')).status,200);assert.match(await(await fetch(base+'/')).text(),/auth\/client\.js/);
+    const workspace=await(await fetch(base+'/api/workspace')).json();assert.equal(workspace.access.readOnly,true);assert.equal(workspace.access.editorUrl,environment.PRIVATE_PREVIEW_URL);assert.equal(workspace.records[0].id,record.id);
+    assert.equal((await post({action:'bootstrap'})).status,200);assert.equal(bootstraps,1,'public bootstrap request must not execute business bootstrap');
+    for(const action of ['capture_plan','finding','workshop','pursuit','preferences','entity','import','add_company','unknown'])assert.equal((await post({action})).status,403,action);
+    for(const [path,method] of [['/api/backup','GET'],['/api/refresh','POST'],['/api/ingest','POST'],['/api/transfer/import','POST']])assert.equal((await fetch(base+path,{method,headers:{Origin:environment.PUBLIC_ORIGIN,'Content-Type':'application/json'},...(method==='POST'?{body:'{}'}:{})})).status,403,path);
+    const generated=await post({action:'brief_snapshot',options:{title:'Public download',records:[{id:record.id,title:'Untrusted replacement'}],findings:[{evidenceIds:[record.id],change:'Analyst finding'}]}});assert.equal(generated.status,200);const result=await generated.json();assert.equal(result.options.ephemeral,true);assert.equal(result.options.records[0].title,record.title);assert(result.options.snapshotId);assert.equal(mutations,0,'ephemeral snapshots never call the persisting business mutation');
+    assert.equal((await post({action:'brief_snapshot',options:{records:[{id:'missing'}]}})).status,400);assert.equal((await post({action:'brief_snapshot',options:{records:[record],findings:[{evidenceIds:['missing']}]}})).status,400);
+    assert.equal((await post({action:'snapshot_get',id:'saved-report'})).status,200);assert.equal(mutations,1);assert.equal(refreshes,0);
+    assert.equal((await fetch(base+'/api/workspace',{method:'POST',headers:{Origin:'https://evil.example.test','Content-Type':'application/json'},body:'{"action":"bootstrap"}'})).status,403);
+  }finally{await app.close();sql.close();}
+});
+
+test('GoDaddy managed preview permits owner CRUD without app login but rejects wrong Host, Origin and missing CSRF',async()=>{
+  // Native HTTP preserves the explicit Host. Node fetch deliberately replaces it.
+  const fetch=(url,options={})=>new Promise((resolve,reject)=>{const request=httpRequest(url,{method:options.method||'GET',headers:options.headers},response=>{const chunks=[];response.on('data',chunk=>chunks.push(chunk));response.on('end',()=>resolve(new Response(Buffer.concat(chunks),{status:response.statusCode,headers:response.headers})));response.on('error',reject);});request.on('error',reject);request.end(options.body);});
+  const sql=await database(),publicDirectory=join(TEMP,'managed-mode');await mkdir(publicDirectory);await writeFile(join(publicDirectory,'index.html'),'<html><head></head><body>Owner editor</body></html>');
+  let mutations=0,refreshes=0;const business={async bootstrap(){},async workspace(){return {records:[]};},async mutate(value){mutations++;return {ok:true,action:value.action};},async refresh(){refreshes++;return {status:'ok'};},async persistCollection(){return {status:'ok'};}};
+  const environment={ACCESS_MODE:'godaddy-private-preview',PUBLIC_ORIGIN:'https://owner-editor.preview.c38.airoapp.ai',ENABLE_SCHEDULER:'false'},host=new URL(environment.PUBLIC_ORIGIN).host;
+  const app=await createApplication({environment,runtime:{database:sql},publicDirectory,business}),address=await app.listen(0,'127.0.0.1'),base='http://127.0.0.1:'+address.port;
+  try{
+    assert.equal((await fetch(base+'/api/workspace')).status,421);assert.equal((await fetch(base+'/api/workspace',{headers:{Host:'intel.insightfuldefense.com','X-Forwarded-Host':host}})).status,421);
+    const response=await fetch(base+'/auth/session',{headers:{Host:host}}),session=await response.json();assert.equal(response.headers.getSetCookie().length,0);assert.equal(session.mode,'godaddy-private-preview');assert.equal(session.readOnly,false);assert(session.csrf);assert.equal(session.email,undefined);
+    assert.equal((await fetch(base+'/auth/login',{headers:{Host:host},redirect:'manual'})).status,404);
+    const headers={Host:host,Origin:environment.PUBLIC_ORIGIN,'X-CSRF-Token':session.csrf,'Content-Type':'application/json'};
+    assert.equal((await fetch(base+'/api/workspace',{headers:{Host:host}})).status,200);
+    assert.equal((await fetch(base+'/api/workspace',{method:'POST',headers:{Host:host,Origin:environment.PUBLIC_ORIGIN,'Content-Type':'application/json'},body:'{"action":"capture_plan"}'})).status,403);
+    assert.equal((await fetch(base+'/api/workspace',{method:'POST',headers:{...headers,Origin:'https://evil.example.test'},body:'{"action":"capture_plan"}'})).status,403);
+    assert.equal((await fetch(base+'/api/workspace',{method:'POST',headers,body:'{"action":"capture_plan"}'})).status,200);assert.equal(mutations,1);
+    assert.equal((await fetch(base+'/api/refresh',{method:'POST',headers})).status,200);assert.equal(refreshes,1);
+  }finally{await app.close();sql.close();}
 });
 
 test('HTTP app protects assets and data; good CSRF works; logout blocks old cookie',async()=>{
@@ -142,6 +213,28 @@ test('Initial import gate prevents seeding, data access and collection until ato
   }finally{await app.close();}
   const restarted=await createApplication({environment:{...environment,ENABLE_SCHEDULER:'false'},runtime,publicDirectory,business}),next=await restarted.listen(0,'127.0.0.1');
   try{assert.equal(bootstraps,1);assert.equal((await fetch('http://127.0.0.1:'+next.port+'/api/workspace',{headers:{Cookie:cookie}})).status,200);}finally{await restarted.close();await runtime.close();}
+});
+
+test('Public pending transfer stays closed while the passwordless GoDaddy editor can import and reopen a private backup',async()=>{
+  const dataDirectory=join(TEMP,'managed-transfer-data');await mkdir(dataDirectory);
+  const runtime=await initializeDatabase({environment:{NODE_ENV:'test'},dataDirectory,migrationsDirectory:resolve(HERE,'..','drizzle')});
+  const publicDirectory=join(TEMP,'managed-transfer-public');await mkdir(publicDirectory);await writeFile(join(publicDirectory,'index.html'),'<html><head></head><body>Transferred app</body></html>');
+  let bootstraps=0;const business={async bootstrap(){bootstraps++;},async workspace(){return {records:[]};},async mutate(){throw Error('Import must not call business mutation');},async refresh(){throw Error('Scheduler must stay disabled');},async persistCollection(){throw Error('Import must not ingest');}};
+  const common={IMPORT_REQUIRED:'true',ENABLE_SCHEDULER:'false'},preview='https://owner-editor.preview.c38.airoapp.ai',host=new URL(preview).host;
+  const payload={schema:'defense-intelligence-transfer',version:1,tables:Object.fromEntries(Object.keys(BACKUP_SCHEMA).map(table=>[table,[]]))};payload.tables.metadata=[{key:'capture_plans',value:JSON.stringify([{id:'restored-capture',title:'Transferred planning'}])}];
+  const publicApp=await createApplication({environment:{...common,ACCESS_MODE:'public',PUBLIC_ORIGIN:'https://intel.insightfuldefense.com'},runtime,publicDirectory,business}),publicAddress=await publicApp.listen(0,'127.0.0.1'),publicBase='http://127.0.0.1:'+publicAddress.port;
+  try{assert.equal(bootstraps,0);const response=await fetch(publicBase+'/');assert.equal(response.status,503);assert(!(await response.text()).includes('Transfer your private workspace'));assert.equal((await fetch(publicBase+'/api/backup')).status,403);assert.equal((await fetch(publicBase+'/api/transfer/import',{method:'POST',headers:{Origin:'https://intel.insightfuldefense.com','Content-Type':'application/json'},body:JSON.stringify(payload)})).status,403);}finally{await publicApp.close();}
+  const fetchPreview=(base,path,options={})=>new Promise((resolve,reject)=>{const request=httpRequest(base+path,{method:options.method||'GET',headers:{Host:host,...options.headers}},response=>{const chunks=[];response.on('data',chunk=>chunks.push(chunk));response.on('end',()=>resolve(new Response(Buffer.concat(chunks),{status:response.statusCode,headers:response.headers})));response.on('error',reject);});request.on('error',reject);request.end(options.body);});
+  const environment={...common,ACCESS_MODE:'godaddy-private-preview',PUBLIC_ORIGIN:preview};
+  const managed=await createApplication({environment,runtime,publicDirectory,business}),managedAddress=await managed.listen(0,'127.0.0.1'),managedBase='http://127.0.0.1:'+managedAddress.port;
+  try{
+    const page=await(await fetchPreview(managedBase,'/')).text();assert.match(page,/Transfer your private workspace/);assert(!page.includes('<button id="signout"'));
+    const session=await(await fetchPreview(managedBase,'/auth/session')).json(),headers={Origin:preview,'Content-Type':'application/json','X-CSRF-Token':session.csrf};
+    const result=await fetchPreview(managedBase,'/api/transfer/import',{method:'POST',headers,body:JSON.stringify(payload)});assert.equal(result.status,200);assert.equal((await result.json()).restartRequired,true);assert(await importComplete(runtime));assert.equal(bootstraps,0);
+    assert.equal((await fetchPreview(managedBase,'/api/workspace')).status,503);assert.equal((await fetchPreview(managedBase,'/api/transfer/import',{method:'POST',headers,body:JSON.stringify(payload)})).status,409);
+  }finally{await managed.close();}
+  const reopened=await createApplication({environment,runtime,publicDirectory,business}),reopenedAddress=await reopened.listen(0,'127.0.0.1'),reopenedBase='http://127.0.0.1:'+reopenedAddress.port;
+  try{assert.equal(bootstraps,1);const backup=await fetchPreview(reopenedBase,'/api/backup');assert.equal(backup.status,200);const data=await backup.json();assert.equal(data.tables.metadata.find(row=>row.key==='capture_plans').value,payload.tables.metadata[0].value);const workspace=await(await fetchPreview(reopenedBase,'/api/workspace')).json();assert.equal(workspace.access.readOnly,false);}finally{await reopened.close();await runtime.close();}
 });
 
 test.after(async()=>{
