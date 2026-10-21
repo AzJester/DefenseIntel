@@ -4,11 +4,16 @@
   "private": true,
   "type": "module",
   "main": "hosting/server.mjs",
-  "engines": {"node": ">=22.13.0"},
+  "engines": {
+    "node": ">=22.13.0"
+  },
   "scripts": {
     "build": "node hosting/build.mjs --source . --output .",
     "start": "node hosting/server.mjs",
-    "test": "node --test hosting/adapter.test.mjs hosting/mysql.test.mjs hosting/import-backup.test.mjs"
+    "test": "node --test hosting/adapter.test.mjs hosting/mysql.test.mjs hosting/import-backup.test.mjs sites-viewer/gateway.test.mjs sites-viewer/site-kit.test.mjs"
   },
-  "dependencies": {"mysql2": "3.24.6", "typescript": "5.9.3"}
+  "dependencies": {
+    "mysql2": "3.24.6",
+    "typescript": "5.9.3"
+  }
 }

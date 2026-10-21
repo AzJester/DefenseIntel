@@ -4,9 +4,11 @@ A defense-industry competitive intelligence and capture workspace with private o
 
 The app supports public-source competitor news, contract announcements, acquisitions and teaming; official USAspending contract actions; grouped events with configurable priorities; source history; analyst findings and cited reports; editable PowerPoint briefs and OV-1 concepts; strategy workshops and black hat and blue team reviews; pursuit comparisons with weighted bars and an assessment heatmap; the official 2022 NAICS catalog; and full capture plans with requirements, customer value, win themes, teaming, risk, gates and milestones. Analyst planning and hypotheses remain separate from cited source statements.
 
-The intended private app hostname is `intel.insightfuldefense.com`. Domain connection and production migration are pending. The editorial apex website is separate and is not changed by this repository.
+Insightful Defense currently uses Sites hosting. Its public read-only gateway shares the existing authoritative owner workspace, including its current intelligence and planning data. The existing owner sign-in remains the editable workspace and its collector remains authoritative. The public viewer has no separate app password and cannot edit shared data. The editorial apex website is separate.
 
-## Build and test
+The complete public Sites adapter is in [sites-viewer/](sites-viewer/README.md), with the canonical gateway, framework configuration, dependency lock and preparation script. It stages the root frontend assets at build time rather than duplicating authored copies. This repository also contains the portable Node/MySQL host as an alternative. No paid GoDaddy hosting purchase was made for the current Sites deployment.
+
+## Portable Node alternative: build and test
 
 Use Node.js 22.13 or later:
 
@@ -18,9 +20,9 @@ npm test
 
 The build compiles the authored `lib/` business modules into generated `server/` files and leaves `public/`, `drizzle/` and source files in place. Generated server files and their hash manifest are included. Rebuild after source changes and review the generated changes together. The pinned TypeScript compiler is in production dependencies because GoDaddy builds after a production-only install. Runtime uses the pinned `mysql2` dependency. The public npm registry is fixed in `.npmrc`. `db/schema.ts` documents the original schema; the checked-in Drizzle SQL journal controls database creation.
 
-## Private hosting and migration
+## Optional portable hosting and migration
 
-Production requires managed MySQL, HTTPS and valid access configuration. Configure [.env.example](.env.example) through the host's private settings. GoDaddy injects the managed database's `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER` and `DB_PASSWORD`. The build reads no runtime secrets. Startup validates its database and access configuration before bootstrap. The server never loads an account or secret from a public asset. See the detailed [hosting guide](hosting/README.md) for certificate validation, migrations, APIs, backups and local SQLite testing.
+The portable Node host is an alternative deployment path, not the current Sites viewer. Its production mode requires managed MySQL, HTTPS and valid access configuration. Configure [.env.example](.env.example) through the host's private settings. A GoDaddy managed deployment can inject the database's `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER` and `DB_PASSWORD`. The build reads no runtime secrets. Startup validates its database and access configuration before bootstrap. The server never loads an account or secret from a public asset. See the detailed [hosting guide](hosting/README.md) for certificate validation, migrations, APIs, backups and local SQLite testing.
 
 `ACCESS_MODE` defines the access boundary:
 

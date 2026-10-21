@@ -10,6 +10,7 @@
   const info=()=>typeof cloud!=='undefined'&&cloud.access?cloud.access:lastAccess;
   const readOnly=()=>info()?.readOnly===true;
   function editorUrl(){try{const value=new URL(info()?.editorUrl||'');return value.protocol==='https:'&&!value.username&&!value.password?value.href:'';}catch{return '';}}
+  function ownerPlace(){const access=info()||{};if(access.editorKind==='godaddy-preview'||access.editorLabel==='Open owner preview'||access.mode==='godaddy-private-preview')return 'owner preview';try{if(/(^|\.)godaddy\.com$/i.test(new URL(editorUrl()).hostname))return 'owner preview';}catch{}return 'owner workspace';}
   function hide(element){if(!element)return;hidden.add(element);element.classList.add('access-private-control');}
   function rename(element,text){if(!element)return;if(!renamed.has(element))renamed.set(element,element.textContent);if(element.textContent!==text)element.textContent=text;}
   function lockControl(control){
@@ -39,9 +40,10 @@
     cleanSnapshots();document.body.classList.add('public-readonly');
     if(!document.getElementById('public-access-style')){const style=document.createElement('style');style.id='public-access-style';style.textContent='.public-readonly .access-private-control{display:none!important}.public-readonly .access-readonly-field{color:#172b3d!important;opacity:1!important;cursor:default}.public-access-banner{background:#f1f5f8;border:1px solid #cad5df;border-left:4px solid #c5a04e;padding:16px 20px;border-radius:6px;margin:0 0 22px;display:flex;align-items:center;justify-content:space-between;gap:18px}.public-access-banner p{margin:5px 0 0}.public-access-banner a{white-space:nowrap}@media(max-width:650px){.public-access-banner{display:block}.public-access-banner a{display:inline-block;margin-top:12px}}';document.head.appendChild(style);}
     let banner=document.getElementById('public-view-banner');
-    if(!banner){banner=document.createElement('section');banner.id='public-view-banner';banner.className='public-access-banner';banner.setAttribute('aria-label','Workspace access');const text=document.createElement('div'),title=document.createElement('strong'),description=document.createElement('p');title.textContent='Public view · owner editing is separate';description.className='small';description.textContent='Browse shared intelligence, plans and charts. Filters, brief selections and downloads stay local to this browser. Changes and collection are available in the owner preview.';text.append(title,description);banner.appendChild(text);const main=document.querySelector('main');if(main)main.insertBefore(banner,document.getElementById('content'));}
+    if(!banner){banner=document.createElement('section');banner.id='public-view-banner';banner.className='public-access-banner';banner.setAttribute('aria-label','Workspace access');const text=document.createElement('div'),title=document.createElement('strong'),description=document.createElement('p');title.textContent='Public view · owner editing is separate';description.className='small';text.append(title,description);banner.appendChild(text);const main=document.querySelector('main');if(main)main.insertBefore(banner,document.getElementById('content'));}
+    const description=banner.querySelector('p'),descriptionText='Browse shared intelligence, plans and charts. Filters, brief selections and downloads stay local to this browser. Changes and collection are available in the '+ownerPlace()+'.';if(description&&description.textContent!==descriptionText)description.textContent=descriptionText;
     const url=editorUrl(),existing=banner.querySelector('[data-access-editor]');
-    if(url&&!existing){const anchor=document.createElement('a');anchor.href=url;anchor.className='source-link';anchor.target='_blank';anchor.rel='noopener noreferrer';anchor.dataset.accessEditor='true';anchor.textContent='Open owner preview ↗';banner.appendChild(anchor);}else if(existing&&existing.href!==url){if(url)existing.href=url;else existing.remove();}
+    if(url&&!existing){const anchor=document.createElement('a');anchor.href=url;anchor.className='source-link';anchor.target='_blank';anchor.rel='noopener noreferrer';anchor.dataset.accessEditor='true';anchor.textContent='Open '+ownerPlace()+' ↗';banner.appendChild(anchor);}else if(existing){if(!url)existing.remove();else{if(existing.href!==url)existing.href=url;const label='Open '+ownerPlace()+' ↗';if(existing.textContent!==label)existing.textContent=label;}}
     document.querySelectorAll(privateControls).forEach(hide);
     document.querySelectorAll('form').forEach(form=>{
       if(!editForms.has(form.id))return;
@@ -55,22 +57,22 @@
     const nav=document.querySelector('[data-view="data"]');if(nav){const span=nav.querySelector('span');if(span)rename(span,'Shared data');}
     const savedHeading=[...document.querySelectorAll('#content h2')].find(heading=>heading.textContent==='Saved brief snapshots');
     if(savedHeading){const paragraph=savedHeading.parentElement.querySelector('p');if(paragraph)rename(paragraph,'Shared saved snapshots remain available below. Your public-view downloads are frozen local copies and do not create or update a shared snapshot.');}
-    const naics=document.getElementById('naics-selection');if(naics){rename(naics.querySelector('h2'),'Explore pursuit codes');const paragraph=naics.querySelector('p');if(paragraph)rename(paragraph,'Browse shared pursuit tags or make a local code selection. Shared tags can be updated in the owner preview.');}
+    const naics=document.getElementById('naics-selection');if(naics){rename(naics.querySelector('h2'),'Explore pursuit codes');const paragraph=naics.querySelector('p');if(paragraph)rename(paragraph,'Browse shared pursuit tags or make a local code selection. Shared tags can be updated in the '+ownerPlace()+'.');}
     const side=document.querySelector('.side-bottom');if(side)for(const node of side.childNodes)if(node.nodeType===3&&node.textContent.includes('Private workspace'))rename(node,node.textContent.replace('Private workspace','Public view'));
     const weekly=document.getElementById('weekly-draft');if(weekly)rename(weekly,'Prepare local weekly draft');
-    for(const id of ['workshop-save-status','pursuit-save-status','capture-save-status']){const status=document.getElementById(id);if(status)rename(status,'Shared plan in public view. Open the owner preview to make changes.');}
+    for(const id of ['workshop-save-status','pursuit-save-status','capture-save-status']){const status=document.getElementById(id);if(status)rename(status,'Shared plan in public view. Open the '+ownerPlace()+' to make changes.');}
   }
   function schedule(){if(scheduled)return;scheduled=true;queueMicrotask(()=>{scheduled=false;apply();});}
   function block(event){
     if(!readOnly())return;
     if(event.type==='submit'&&editForms.has(event.target.id)||event.type==='click'&&event.target.closest?.(privateControls)){
-      event.preventDefault();event.stopImmediatePropagation();if(typeof toast==='function')toast('Public view. Open the owner preview to change shared data.');
+      event.preventDefault();event.stopImmediatePropagation();if(typeof toast==='function')toast('Public view. Open the '+ownerPlace()+' to change shared data.');
     }
   }
   window.addEventListener('click',block,true);window.addEventListener('submit',block,true);
   const originalApi=api;
   api=async function(path,body){
-    if(readOnly()&&body&&!(path==='/api/workspace'&&['snapshot_get','brief_snapshot','bootstrap'].includes(body.action)))throw Error('Public view. Open the owner preview to change shared data.');
+    if(readOnly()&&body&&!(path==='/api/workspace'&&['snapshot_get','brief_snapshot','bootstrap'].includes(body.action)))throw Error('Public view. Open the '+ownerPlace()+' to change shared data.');
     if(readOnly()&&path==='/api/workspace'&&body?.action==='bootstrap')return {ok:true,readOnly:true};
     const result=await originalApi(path,body);
     if(result?.access){lastAccess=result.access;schedule();}
@@ -83,7 +85,7 @@
     if(route==='pursuits'&&typeof pursuitDraft!=='undefined'&&!pursuitDraft?.id&&Array.isArray(cloud.pursuits)&&cloud.pursuits.length){pursuitDraft=pursuitNormalize(cloud.pursuits[0]);pursuitDirty=false;content.innerHTML=pursuitsView();}
     if(route==='capture'&&typeof captureDraft!=='undefined'&&!captureDraft?.id&&Array.isArray(cloud.capturePlans)&&cloud.capturePlans.length){captureDraft=captureNormalize(cloud.capturePlans[0]);captureDirty=false;content.innerHTML=captureView();}
     const shared=route==='workshops'?cloud.workshops:route==='pursuits'?cloud.pursuits:route==='capture'?cloud.capturePlans:null;
-    if(Array.isArray(shared)&&!shared.length)content.innerHTML='<section class="panel empty"><h2>No shared plan yet</h2><p>The owner can prepare and save this plan in the owner preview. Shared plans will appear here when available.</p></section>';
+    if(Array.isArray(shared)&&!shared.length)content.innerHTML='<section class="panel empty"><h2>No shared plan yet</h2><p>The owner can prepare and save this plan in the '+ownerPlace()+'. Shared plans will appear here when available.</p></section>';
   }
   const priorRender=render;render=function(){cleanSnapshots();priorRender();selectSharedPlan();apply();};window.removeEventListener('hashchange',priorRender);window.addEventListener('hashchange',render);
   const observer=new MutationObserver(schedule);observer.observe(document.getElementById('content'),{childList:true,subtree:true});
