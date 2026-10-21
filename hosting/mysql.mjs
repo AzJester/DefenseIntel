@@ -1,6 +1,7 @@
 import {createHash} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 import {join} from 'node:path';
+import {connect,isIP} from 'node:net';
 
 const SQL=Symbol('mysql-statement'),OWNER=Symbol('mysql-owner');
 const LOCK_SQL="INSERT INTO metadata (key,value) VALUES ('refresh_lock',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value WHERE metadata.value='null' OR metadata.value<? RETURNING key";
@@ -98,8 +99,20 @@ export function mysqlConfiguration(environment){
   const port=Number(input.port);if(!Number.isInteger(port)||port<1||port>65535)throw Error('DB_PORT is invalid');
   const local=['localhost','127.0.0.1','::1'].includes(input.host);
   if(environment.DB_SSL_MODE&&environment.DB_SSL_MODE!=='verify'&&!(local&&environment.DB_SSL_MODE==='disable'))throw Error('Remote MySQL requires verified TLS; DB_SSL_MODE=disable is allowed only for loopback tests');
+  let transport={};
+  if(environment.DB_TLS_SERVERNAME){
+    const identity=environment.DB_TLS_SERVERNAME;
+    if(!local||environment.DB_SSL_MODE==='disable')throw Error('DB_TLS_SERVERNAME requires a verified TLS connection through a loopback database proxy');
+    if(typeof identity!=='string'||identity.length>253||/[^a-zA-Z0-9.-]/.test(identity)||isIP(identity)||!identity.includes('.')||!identity.split('.').every(label=>/^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$/.test(label)))throw Error('DB_TLS_SERVERNAME must be an explicit provider DNS identity');
+    const proxyHost=input.host;
+    // mysql2 3.24.6 uses config.host for both SNI and certificate identity. Its
+    // supported stream factory keeps TCP routing at the original local proxy.
+    input.host=identity.toLowerCase();
+    transport={stream:()=>connect({host:proxyHost,port}).setNoDelay(true).setKeepAlive(true)};
+  }
   return {...input,port,waitForConnections:true,connectionLimit:5,queueLimit:50,connectTimeout:15000,enableKeepAlive:true,
     charset:'utf8mb4',dateStrings:true,decimalNumbers:true,supportBigNumbers:true,bigNumberStrings:false,flags:'-FOUND_ROWS',multipleStatements:false,
+    ...transport,
     ...(local&&environment.DB_SSL_MODE==='disable'?{}:{ssl:{rejectUnauthorized:true,verifyIdentity:true,...(environment.DB_SSL_CA?{ca:environment.DB_SSL_CA}:{})}})};
 }
 

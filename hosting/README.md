@@ -29,6 +29,7 @@ Code can be uploaded before owner secrets are entered in the hosting UI. The bui
 | `DB_HOST`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` | Managed MySQL connection details when `DATABASE_URL` is not supplied. |
 | `DB_PORT` | Optional port, default 3306. |
 | `DB_SSL_CA` | Optional private CA PEM when the provider requires its own trust chain. Remote TLS always verifies the certificate chain and hostname. |
+| `DB_TLS_SERVERNAME` | Optional provider-confirmed DNS identity for verified TLS through a loopback `DB_HOST` proxy. TCP still uses the injected host/port. Refused for remote transport or disabled TLS. |
 | `ADMIN_EMAIL` | The single owner's sign-in address. |
 | `ADMIN_PASSWORD_HASH` | Preferred verifier: `scrypt$N$r$p$saltBase64url$keyBase64url`. Generate using `node hosting/password-hash.mjs` with the password entered through hidden stdin. |
 | `ADMIN_PASSWORD` | Alternative host secret of at least 16 bytes. Set this or the hash, never both. Plaintext mode intentionally invalidates sessions on each restart. |
@@ -39,6 +40,8 @@ Code can be uploaded before owner secrets are entered in the hosting UI. The bui
 | `IMPORT_REQUIRED` | Set `true` on first deployment to prevent bootstrap, app data access and scheduling until the owner backup has imported and the server restarts. |
 
 MySQL connections use a bounded promise pool, parameter binding, disabled multi-statements, UTF-8 and verified TLS. Remote certificate/hostname verification cannot be disabled. `DB_SSL_MODE=disable` is supported only for a loopback database in local tests. A failed connection or migration stops startup rather than falling back to a local file.
+
+A managed database may inject `DB_HOST=localhost` while its TLS certificate identifies the provider's upstream service. In that case, set `DB_TLS_SERVERNAME` only to the DNS identity confirmed by the provider. Do not discover or accept the expected identity from an unverified peer certificate. The adapter uses mysql2's [supported connection stream factory](https://sidorares.github.io/node-mysql2/docs/documentation/extras#connecting-using-custom-stream) to connect to the original loopback host and port, while `config.host` supplies the configured DNS name for SNI and hostname verification. In pinned mysql2 3.24.6, `ssl.servername` is not used by the driver's TLS path. Certificate chain and hostname verification both remain required; no plaintext fallback is used.
 
 GoDaddy [documents that preview and production share the app's database](https://www.godaddy.com/resources/news/deploy-a-node-js-app-to-godaddy-from-your-terminal-or-let-your-coding-agent-do-it). Treat preview as access to production data. Disable its scheduler, prevent concurrent collection/imports, and use a separate database for destructive tests. Never assume a preview is an isolated copy. Confirm the provider's TLS/CA details and run a live connection/schema smoke test before switching the production hostname.
 

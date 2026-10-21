@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import {mkdtemp,cp,readFile,writeFile,rm,realpath} from 'node:fs/promises';
 import {join,resolve,relative,isAbsolute} from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {createServer} from 'node:net';
+import {once} from 'node:events';
+import {checkServerIdentity} from 'node:tls';
 import {translateSql,isRefreshLockQuery,translateMigration,mysqlConfiguration,createMysqlDatabase,applyMysqlMigrations} from './mysql.mjs';
 import {createAuth,hashPassword} from './auth.mjs';
 
@@ -94,6 +97,29 @@ test('Remote MySQL requires verified TLS and safe connection configuration',()=>
   assert.throws(()=>mysqlConfiguration({DATABASE_URL:'mysql://owner:secret@db.example.test/private_db?multipleStatements=true'}),/unsupported options/);
   assert(!mysqlConfiguration({DB_HOST:'127.0.0.1',DB_USER:'local',DB_PASSWORD:'secret',DB_NAME:'test',DB_SSL_MODE:'disable'}).ssl);
   assert.throws(()=>mysqlConfiguration({DATABASE_URL:'unparseable-private-secret'}),error=>error.message==='DATABASE_URL is invalid');
+});
+
+test('An explicit provider TLS identity keeps each pooled TCP connection on its original loopback proxy',async()=>{
+  const sockets=new Set(),server=createServer(socket=>{sockets.add(socket);socket.on('close',()=>sockets.delete(socket));});
+  await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});
+  const streams=[];
+  try{
+    const environment={DB_HOST:'127.0.0.1',DB_PORT:String(server.address().port),DB_USER:'owner',DB_PASSWORD:'test-only',DB_NAME:'private_test',DB_TLS_SERVERNAME:'databaseservices.int.gdcorp.tools'};
+    const config=mysqlConfiguration(environment);
+    assert.equal(config.host,environment.DB_TLS_SERVERNAME);assert.equal(config.port,server.address().port);
+    assert.equal(config.ssl.rejectUnauthorized,true);assert.equal(config.ssl.verifyIdentity,true);assert.equal(config.ssl.servername,undefined);
+    for(let index=0;index<2;index++){
+      const stream=config.stream();streams.push(stream);await once(stream,'connect');assert.equal(stream.remoteAddress,'127.0.0.1');assert.equal(stream.remotePort,server.address().port);
+    }
+    assert.notEqual(streams[0],streams[1]);
+    const certificate={subject:{CN:'unused.example.test'},subjectaltname:'DNS:*.databaseservices.int.gdcorp.tools, DNS:databaseservices.int.gdcorp.tools'};
+    assert.equal(checkServerIdentity(config.host,certificate),undefined);
+    assert.equal(checkServerIdentity(environment.DB_HOST,certificate).code,'ERR_TLS_CERT_ALTNAME_INVALID');
+    assert.equal(checkServerIdentity('different.example.test',certificate).code,'ERR_TLS_CERT_ALTNAME_INVALID');
+    assert.throws(()=>mysqlConfiguration({...environment,DB_HOST:'remote.example.test'}),/loopback database proxy/);
+    assert.throws(()=>mysqlConfiguration({...environment,DB_SSL_MODE:'disable'}),/verified TLS connection/);
+    for(const identity of ['localhost','127.0.0.1','::1','*.example.test','https://db.example.test','db.example.test\n','-bad.example.test','db..example.test'])assert.throws(()=>mysqlConfiguration({...environment,DB_TLS_SERVERNAME:identity}),/provider DNS identity/);
+  }finally{for(const stream of streams)stream.destroy();for(const socket of sockets)socket.destroy();await new Promise(resolve=>server.close(resolve));}
 });
 
 test('MySQL migration translation retains identifiers and makes content LONGTEXT',()=>{
