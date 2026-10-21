@@ -96,6 +96,8 @@ test('Remote MySQL requires verified TLS and safe connection configuration',()=>
   assert.throws(()=>mysqlConfiguration({DATABASE_URL:'mysql://owner:secret@db.example.test/private_db',DB_SSL_MODE:'disable'}),/verified TLS/);
   assert.throws(()=>mysqlConfiguration({DATABASE_URL:'mysql://owner:secret@db.example.test/private_db?multipleStatements=true'}),/unsupported options/);
   assert(!mysqlConfiguration({DB_HOST:'127.0.0.1',DB_USER:'local',DB_PASSWORD:'secret',DB_NAME:'test',DB_SSL_MODE:'disable'}).ssl);
+  for(const host of ['localhost','127.0.0.1','::1'])assert.throws(()=>mysqlConfiguration({NODE_ENV:'production',DB_HOST:host,DB_USER:'local',DB_PASSWORD:'test-only',DB_NAME:'test',DB_SSL_MODE:'disable'}),/Production MySQL requires verified TLS/);
+  const production=mysqlConfiguration({NODE_ENV:'production',DB_HOST:'localhost',DB_USER:'local',DB_PASSWORD:'test-only',DB_NAME:'test'});assert.equal(production.ssl.rejectUnauthorized,true);assert.equal(production.ssl.verifyIdentity,true);
   assert.throws(()=>mysqlConfiguration({DATABASE_URL:'unparseable-private-secret'}),error=>error.message==='DATABASE_URL is invalid');
 });
 

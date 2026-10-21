@@ -98,6 +98,7 @@ export function mysqlConfiguration(environment){
   if(!input.host||!input.user||!input.password||!input.database||/[\u0000-\u001f]/.test(input.host)||input.database.length>64||!/^[-a-zA-Z0-9_$]+$/.test(input.database))throw Error('MySQL requires DB_HOST, DB_USER, DB_PASSWORD and DB_NAME, or a complete DATABASE_URL');
   const port=Number(input.port);if(!Number.isInteger(port)||port<1||port>65535)throw Error('DB_PORT is invalid');
   const local=['localhost','127.0.0.1','::1'].includes(input.host);
+  if(environment.NODE_ENV==='production'&&environment.DB_SSL_MODE==='disable')throw Error('Production MySQL requires verified TLS');
   if(environment.DB_SSL_MODE&&environment.DB_SSL_MODE!=='verify'&&!(local&&environment.DB_SSL_MODE==='disable'))throw Error('Remote MySQL requires verified TLS; DB_SSL_MODE=disable is allowed only for loopback tests');
   let transport={};
   if(environment.DB_TLS_SERVERNAME){

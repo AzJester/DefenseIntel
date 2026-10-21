@@ -38,7 +38,7 @@ Code can be uploaded before runtime settings are entered in the hosting UI. The 
 | `SESSION_SECRET` | Owner-password mode only. At least 32 bytes of random secret material. Keep stable across ordinary restarts; rotation invalidates all sessions. |
 | `PORT` | Runtime port supplied by the host. Defaults to 3000 for manual use. |
 | `HOST` | Bind interface, default `0.0.0.0` in production. |
-| `ENABLE_SCHEDULER` | Set exactly `false` for the public variant and every nonauthoritative preview. Enable only the one authoritative private collecting process. |
+| `ENABLE_SCHEDULER` | Set exactly `false` in every nonauthoritative deployment, including the owner preview. Enable only the authoritative collecting process after cutover; public HTTP collection remains denied. |
 | `IMPORT_REQUIRED` | Set `true` on first deployment to prevent bootstrap, app data access and scheduling until the owner backup has imported and the server restarts. Pending public mode fails closed without an import screen. |
 
 MySQL connections use a bounded promise pool, parameter binding, disabled multi-statements, UTF-8 and verified TLS. Remote certificate/hostname verification cannot be disabled. `DB_SSL_MODE=disable` is supported only for a loopback database in local tests. A failed connection or migration stops startup rather than falling back to a local file.
