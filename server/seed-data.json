@@ -1,0 +1,171 @@
+{
+  "companies": [
+    {
+      "name": "Amentum",
+      "initial": "AM",
+      "focus": "Test, evaluation & mission support",
+      "tags": [
+        "Test & evaluation",
+        "Digital engineering",
+        "Space"
+      ],
+      "url": "https://www.amentum.com/our-capabilities/mission-modernization-sustainment/research-development-test-evaluation/",
+      "fact": "Amentum describes research, development, test and evaluation services, range operations and modernization for defense customers.",
+      "assessment": "Candidate for closer review for pursuits involving test, evaluation or range support. Validate overlap at the task-order level.",
+      "question": "Which relevant ranges and incumbent task orders have upcoming procurement milestones?",
+      "matrix": [
+        1,
+        1,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "name": "Leidos",
+      "initial": "LD",
+      "focus": "Integrated defense & tactical systems",
+      "tags": [
+        "Air & missile defense",
+        "Autonomy",
+        "Integration"
+      ],
+      "url": "https://www.leidos.com/markets/defense",
+      "fact": "Leidos highlights sensors, effectors, munitions, missile systems and maritime autonomy in its defense portfolio.",
+      "assessment": "Candidate overlap in integrated air defense, autonomy and edge integration. Distinguish product competition from engineering services.",
+      "question": "Where is Leidos the prime, a platform supplier or a potential teaming partner?",
+      "matrix": [
+        0,
+        1,
+        1,
+        1,
+        0
+      ]
+    },
+    {
+      "name": "SAIC",
+      "initial": "SA",
+      "focus": "Mission integration & engineering",
+      "tags": [
+        "Engineering",
+        "Mission IT",
+        "Modeling & simulation"
+      ],
+      "url": "https://www.saic.com/",
+      "fact": "SAIC presents mission IT, engineering services, modeling and simulation, and mission integration offerings.",
+      "assessment": "Candidate overlap in mission integration and engineering. Public positioning alone does not establish a competing bid.",
+      "question": "Which customer offices and contract vehicles overlap with the target pipeline?",
+      "matrix": [
+        0,
+        1,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "name": "KBR",
+      "initial": "KB",
+      "focus": "Digital engineering & mission operations",
+      "tags": [
+        "Digital engineering",
+        "Mission operations",
+        "Space"
+      ],
+      "url": "https://www.kbr.com/en/what-we-do/mission-technology-solutions",
+      "fact": "KBR lists digital engineering and integration, prototyping, mission operations and analytics, with defense and space customers.",
+      "assessment": "Candidate overlap in engineering, integration and space support. Examine specific business units and delivery roles.",
+      "question": "Which space or engineering programs provide relevant incumbent past performance?",
+      "matrix": [
+        0,
+        1,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "name": "Parsons",
+      "initial": "PA",
+      "focus": "Missile defense, cyber & space",
+      "tags": [
+        "Missile defense",
+        "Cyber",
+        "Space"
+      ],
+      "url": "https://www.parsons.com/national-security/",
+      "fact": "Parsons lists missile defense, cyber and intelligence, space, infrastructure and all-domain solutions in its national security portfolio.",
+      "assessment": "Candidate overlap across missile defense, cyber and space. Confirm agency and acquisition scope before ranking.",
+      "question": "Which missile defense or space integration opportunities warrant a competitor assessment?",
+      "matrix": [
+        0,
+        1,
+        1,
+        0,
+        1
+      ]
+    }
+  ],
+  "seed": [
+    {
+      "id": "seed-a",
+      "company": "Amentum",
+      "category": "Capability",
+      "title": "Range operations and RDT&E provide a focused starting point",
+      "summary": "Amentum describes research, development, test and evaluation services, range operations and modernization for defense customers.",
+      "assessment": "Candidate for closer review for pursuits involving test, evaluation or range support. Validate overlap at the task-order level.",
+      "url": "https://www.amentum.com/our-capabilities/mission-modernization-sustainment/research-development-test-evaluation/",
+      "date": "",
+      "reviewed": "2026-10-21",
+      "priority": "High"
+    },
+    {
+      "id": "seed-l",
+      "company": "Leidos",
+      "category": "Capability",
+      "title": "Integrated defense portfolio connects sensing, platforms and effects",
+      "summary": "Leidos highlights sensors, effectors, munitions, missile systems and maritime autonomy in its defense portfolio.",
+      "assessment": "Candidate overlap in integrated air defense, autonomy and edge integration. Distinguish product competition from engineering services.",
+      "url": "https://www.leidos.com/markets/defense",
+      "date": "",
+      "reviewed": "2026-10-21",
+      "priority": "High"
+    },
+    {
+      "id": "seed-k",
+      "company": "KBR",
+      "category": "Capability",
+      "title": "Digital engineering and space operations share areas of interest",
+      "summary": "KBR lists digital engineering and integration, prototyping, mission operations and analytics, with defense and space customers.",
+      "assessment": "Candidate overlap in engineering, integration and space support. Examine specific business units and delivery roles.",
+      "url": "https://www.kbr.com/en/what-we-do/mission-technology-solutions",
+      "date": "",
+      "reviewed": "2026-10-21",
+      "priority": "Normal"
+    },
+    {
+      "id": "seed-p",
+      "company": "Parsons",
+      "category": "Capability",
+      "title": "Missile defense, cyber and space merit program-level research",
+      "summary": "Parsons lists missile defense, cyber and intelligence, space, infrastructure and all-domain solutions in its national security portfolio.",
+      "assessment": "Candidate overlap across missile defense, cyber and space. Confirm agency and acquisition scope before ranking.",
+      "url": "https://www.parsons.com/national-security/",
+      "date": "",
+      "reviewed": "2026-10-21",
+      "priority": "Normal"
+    },
+    {
+      "id": "seed-s",
+      "company": "SAIC",
+      "category": "Capability",
+      "title": "Mission integration and simulation form a relevant comparison",
+      "summary": "SAIC presents mission IT, engineering services, modeling and simulation, and mission integration offerings.",
+      "assessment": "Candidate overlap in mission integration and engineering. Public positioning alone does not establish a competing bid.",
+      "url": "https://www.saic.com/",
+      "date": "",
+      "reviewed": "2026-10-21",
+      "priority": "Normal"
+    }
+  ]
+}

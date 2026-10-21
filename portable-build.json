@@ -1,0 +1,12 @@
+{
+  "createdAt": "2026-10-21T18:02:44.935Z",
+  "node": ">=22.13.0",
+  "modules": {
+    "workspace.ts": "3c0070389f7f514e12141420a29e9333eedf0fe076c88c3d8a7ad2e2e8e17f0a",
+    "intelligence-workspace.ts": "0c10e794ea818122379a30e84910116c00ce8a3842c94494e7124d5256814b45",
+    "intelligence-feeds.ts": "ee2354e8c79dfd0ec7b6cc5ce0426be909a0a85124ed4fd902ef544c5dcdd6f9",
+    "official-awards.ts": "569909b0590c1ec1adea5909160a73f4534a77f30dd50d6b7fa39f7ea4218632",
+    "event-intelligence.ts": "21044e4b65637f1125738561f803cd594ce91700f43a7a43978441078a98388b"
+  },
+  "migrationJournal": "c209e85d1594127a159459191a6843f5123b64c255eb847f6b94ded41253ec57"
+}

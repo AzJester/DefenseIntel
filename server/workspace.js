@@ -1,0 +1,177 @@
+import { env } from '../hosting/runtime.mjs';
+import initial from './seed-data.json' with { type: 'json' };
+import { enhancedWorkspace, enhancementMutation, captureSources, rebuildEvents, refreshOfficial } from './intelligence-workspace.js';
+import { collectFeeds, normalizeTitle, relevantToCompany, classifyForCompany } from './intelligence-feeds.js';
+const db = () => { if (!env.DB)
+    throw new Error('Persistent database is unavailable.'); return env.DB; };
+const now = () => new Date().toISOString();
+const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 80);
+const extras = [['Booz Allen Hamilton', 'Booz Allen|Booz Allen Hamilton', 'https://www.boozallen.com'], ['CACI', 'CACI International|CACI', 'https://www.caci.com'], ['HII', 'Huntington Ingalls|HII Mission Technologies', 'https://hii.com'], ['ManTech', 'ManTech', 'https://www.mantech.com'], ['Peraton', 'Peraton', 'https://www.peraton.com'], ['Serco', 'Serco', 'https://www.serco.com'], ['V2X', 'V2X|Vectrus', 'https://www.gov2x.com'], ['BAE Systems', 'BAE Systems', 'https://www.baesystems.com'], ['Northrop Grumman', 'Northrop Grumman', 'https://www.northropgrumman.com'], ['Lockheed Martin', 'Lockheed Martin', 'https://www.lockheedmartin.com'], ['RTX', 'Raytheon|RTX Corporation', 'https://www.rtx.com'], ['Boeing', 'Boeing', 'https://www.boeing.com'], ['General Dynamics', 'General Dynamics|GDIT', 'https://www.gd.com'], ['L3Harris', 'L3Harris|L3 Harris', 'https://www.l3harris.com'], ['Sierra Nevada Corporation', 'Sierra Nevada Corporation|SNC', 'https://www.sncorp.com']];
+function json(data, status = 200) { return Response.json(data, { status, headers: { 'Cache-Control': 'no-store' } }); }
+export { json };
+async function meta(key, value) { await db().prepare('INSERT INTO metadata (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').bind(key, JSON.stringify(value)).run(); }
+async function getMeta(key) { const row = await db().prepare('SELECT value FROM metadata WHERE key=?').bind(key).first(); return row ? JSON.parse(row.value) : null; }
+export async function bootstrap() {
+    const rows = [...initial.companies.map((c) => ({ id: slug(c.name), name: c.name, aliases: c.name, website: c.url, profile: JSON.stringify(c) })), ...extras.map(([name, aliases, website]) => ({ id: slug(name), name, aliases, website, profile: JSON.stringify({ name, initial: name.split(' ').map(v => v[0]).slice(0, 2).join(''), focus: 'Candidate for program-level research', tags: ['Research pending'], url: website, fact: 'Candidate company. Portfolio and pursuit overlap require validation.', assessment: 'Not ranked. Validate the relevant business unit and acquisition role.', question: 'Which programs and customer offices overlap with your target pipeline?', matrix: [0, 0, 0, 0, 0] }) }))];
+    await db().batch(rows.map(c => db().prepare('INSERT OR IGNORE INTO competitors (id,name,aliases,website,profile,active) VALUES (?,?,?,?,?,1)').bind(c.id, c.name, c.aliases, c.website, c.profile)));
+    const timestamp = now();
+    await db().batch(initial.seed.map((s) => recordStatement({ ...s, published: s.date, source: 'Company capability page', verification: 'Company-stated capability', origin: 'baseline', created: timestamp })));
+}
+function recordStatement(r) { return db().prepare('INSERT OR IGNORE INTO intelligence (id,company,category,title,summary,assessment,url,published,reviewed,priority,source,verification,origin,created,fingerprint) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').bind(r.id, r.company, r.category, r.title, r.summary, r.assessment || '', r.url, r.published || '', r.reviewed || now().slice(0, 10), r.priority || 'Normal', r.source || 'User entry', r.verification || 'Unverified', r.origin || 'manual', r.created || now(), fingerprint(r)); }
+function fingerprint(r) { return JSON.stringify([r.title, r.summary, r.published, r.category, r.priority, r.source, r.verification, r.url]); }
+function currentAlertDetails(record) { const reason = record.category === 'Acquisition' ? 'Acquisition or merger announcement detected' : record.category === 'Teaming' ? 'Teaming or partnership announcement detected' : 'Contract award announcement detected'; return { severity: record.priority || 'Normal', reason: `${reason}${record.verification.includes('corroboration') ? ' • corroboration needed' : ''}` }; }
+async function baseWorkspace() { const [c, r, a] = await Promise.all([db().prepare('SELECT * FROM competitors ORDER BY name').all(), db().prepare('WITH recent AS (SELECT * FROM intelligence ORDER BY published DESC,created DESC LIMIT 1000) SELECT * FROM recent UNION SELECT * FROM intelligence WHERE id IN (SELECT record_id FROM alerts ORDER BY created DESC LIMIT 300) ORDER BY published DESC,created DESC').all(), db().prepare('SELECT * FROM alerts ORDER BY created DESC LIMIT 300').all()]); const excluded = new Set(await getMeta('quarantined_records') || []); const records = r.results.filter(r => !excluded.has(r.id)); const visible = new Map(records.map(r => [r.id, r])); return { companies: c.results.map(c => ({ ...JSON.parse(c.profile), id: c.id, name: c.name, aliases: c.aliases, website: c.website, active: !!c.active })), records: records.map(r => ({ ...r, date: r.published })), alerts: a.results.filter(a => visible.has(a.record_id) && ['Acquisition', 'Teaming', 'Contract award'].includes(visible.get(a.record_id).category)).map(a => ({ ...a, ...currentAlertDetails(visible.get(a.record_id)) })), run: await getMeta('last_run'), schedule: await getMeta('schedule') }; }
+export async function workspace() { const base = await baseWorkspace(); return { ...base, ...await enhancedWorkspace(base.records) }; }
+function eventKey(r) { return r.company.toLowerCase() + '|' + normalizeTitle(r.title, r.source?.split(' · ').slice(1).join(' · ') || ''); }
+export async function persistCollection(collected, started = now(), transport = 'hosted') {
+    const directory = await db().prepare('SELECT id,name,aliases,website FROM competitors WHERE active=1 ORDER BY name LIMIT 30').all();
+    const allowed = new Set(directory.results.map(c => c.name));
+    const existing = await db().prepare("SELECT * FROM intelligence WHERE origin='automatic' ORDER BY created DESC LIMIT 5000").all();
+    const quarantined = [];
+    const corrections = [];
+    for (const r of existing.results) {
+        const company = directory.results.find(c => c.name === r.company);
+        if (!company)
+            continue;
+        if (!relevantToCompany(r.title + ' ' + r.summary, company)) {
+            quarantined.push(r.id);
+            continue;
+        }
+        if (r.verification !== 'Government announcement') {
+            const classification = classifyForCompany(r.title, company);
+            if (r.category !== classification.category || r.priority !== classification.priority) {
+                Object.assign(r, classification);
+                r.fingerprint = fingerprint(r);
+                corrections.push(db().prepare('UPDATE intelligence SET category=?,priority=?,fingerprint=? WHERE id=?').bind(r.category, r.priority, r.fingerprint, r.id));
+            }
+        }
+    }
+    for (let i = 0; i < corrections.length; i += 80)
+        await db().batch(corrections.slice(i, i + 80));
+    await meta('quarantined_records', quarantined);
+    const byId = new Map(existing.results.map(r => [r.id, r])), byEvent = new Map(existing.results.map(r => [eventKey(r), r]));
+    let added = 0, updated = 0, alertCount = 0;
+    const ids = [];
+    const sourceRecords = [];
+    for (const item of collected.items.slice(0, 500)) {
+        if (!allowed.has(item.company))
+            continue;
+        const sourceUrl = url(item.url);
+        const age = item.published ? Date.now() - Date.parse(item.published) : Infinity;
+        if (age < -300000 || !Number.isFinite(age) && item.published)
+            continue;
+        const prior = byId.get(item.id) || byEvent.get(eventKey(item));
+        const r = { ...item, id: prior?.id || item.id, url: sourceUrl, assessment: prior?.assessment || '', reviewed: started.slice(0, 10), created: started, origin: 'automatic' };
+        let changed = false;
+        if (!prior) {
+            const result = await recordStatement(r).run();
+            if (result.meta.changes) {
+                added++;
+                changed = true;
+            }
+        }
+        else if (prior.fingerprint !== fingerprint(r)) {
+            await db().prepare('UPDATE intelligence SET title=?,summary=?,url=?,published=?,reviewed=?,category=?,priority=?,source=?,verification=?,fingerprint=? WHERE id=?').bind(r.title, r.summary, r.url, r.published, started.slice(0, 10), r.category, r.priority, r.source, r.verification, fingerprint(r), r.id).run();
+            updated++;
+            changed = prior.title !== r.title || prior.summary !== r.summary || prior.published !== r.published || prior.category !== r.category || prior.priority !== r.priority;
+        }
+        byId.set(r.id, r);
+        byEvent.set(eventKey(r), r);
+        sourceRecords.push(r);
+        const significant = ['Acquisition', 'Teaming', 'Contract award'].includes(r.category);
+        if (changed && significant && age >= 0 && age < 15 * 86400000) {
+            const reason = r.category === 'Acquisition' ? 'Acquisition or merger announcement detected' : r.category === 'Teaming' ? 'Teaming or partnership announcement detected' : 'Contract award announcement detected';
+            const alertId = r.id + '-' + (await digest(JSON.stringify([r.title, r.published, r.category, r.priority]))).slice(0, 16);
+            const inserted = await db().prepare('INSERT OR IGNORE INTO alerts (id,record_id,severity,reason,created,acknowledged) VALUES (?,?,?,?,?,0)').bind(alertId, r.id, r.priority, `${reason}${r.verification.includes('corroboration') ? ' • corroboration needed' : ''}`, started).run();
+            if (inserted.meta.changes) {
+                alertCount++;
+                ids.push(r.id);
+            }
+        }
+    }
+    const previous = await getMeta('company_coverage') || [];
+    const companyCoverage = directory.results.map(c => { const current = collected.companies.find(v => v.id === c.id) || { id: c.id, name: c.name, status: 'error', checkedAt: now(), items: 0, latestPublished: '', sources: [], errors: ['Not checked in this run'] }; const old = previous.find((v) => v.id === c.id); return { ...current, lastSuccess: current.status !== 'error' ? current.checkedAt : old?.lastSuccess || null }; });
+    const successful = companyCoverage.filter(c => c.status !== 'error').length;
+    await captureSources(sourceRecords, started);
+    const grouped = await rebuildEvents();
+    const result = { status: successful === directory.results.length ? 'ok' : successful ? 'partial' : 'failed', started, finished: now(), added, updated, newAlerts: grouped.newAlerts, alertRecordIds: grouped.alertRecordIds, legacyNewAlerts: alertCount, groupedEvents: grouped.events, health: collected.health, coverage: successful, requested: directory.results.length, withItems: companyCoverage.filter(c => c.items > 0).length, companyCoverage, sourceIssues: collected.health.filter(h => !['ok', 'empty'].includes(h.status)).length, transport, quarantinedRecords: quarantined.length, correctedRecords: corrections.length };
+    await meta('company_coverage', companyCoverage);
+    await meta('last_run', result);
+    if (successful)
+        await meta('last_successful_run', result);
+    return result;
+}
+export async function refresh() { await bootstrap(); const stamp = now(); const obtained = await db().prepare("INSERT INTO metadata (key,value) VALUES ('refresh_lock',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value WHERE metadata.value='null' OR metadata.value<? RETURNING key").bind(JSON.stringify(stamp), JSON.stringify(new Date(Date.now() - 180000).toISOString())).first(); if (!obtained)
+    return { status: 'busy', message: 'Another refresh is in progress.' }; try {
+    const data = await db().prepare('SELECT id,name,aliases,website FROM competitors WHERE active=1 ORDER BY name LIMIT 30').all();
+    const news = await collectFeeds(data.results);
+    let official;
+    try {
+        official = await refreshOfficial(data.results);
+    }
+    catch (e) {
+        official = { health: [{ source: "USAspending.gov", status: "error", detail: e.message }], records: 0 };
+    }
+    const result = await persistCollection(news, stamp);
+    return { ...result, official };
+}
+finally {
+    await meta('refresh_lock', null);
+} }
+const clean = (v, max = 3000) => String(v ?? '').trim().slice(0, max);
+const url = (v) => { let u; try {
+    u = new URL(clean(v, 2000));
+}
+catch {
+    throw new Error('A valid source or company URL is required.');
+} if (!['http:', 'https:'].includes(u.protocol))
+    throw new Error('Only http and https URLs are supported.'); return u.href; };
+async function digest(s) { return [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)))].map(b => b.toString(16).padStart(2, '0')).join(''); }
+export async function mutate(body) {
+    const enhanced = await enhancementMutation(body);
+    if (enhanced !== null)
+        return enhanced;
+    const action = body.action;
+    if (action === 'bootstrap') {
+        await bootstrap();
+        return { ok: true };
+    }
+    if (action === 'ack') {
+        await db().prepare('UPDATE alerts SET acknowledged=1 WHERE id=?').bind(clean(body.id, 200)).run();
+        return { ok: true };
+    }
+    if (action === 'schedule') {
+        await meta('schedule', body.schedule);
+        return { ok: true };
+    }
+    if (action === 'competitor') {
+        const name = clean(body.name, 100), website = url(body.website), aliases = clean(body.aliases || name, 500);
+        if (!name)
+            throw Error('Competitor name is required.');
+        const id = body.id ? clean(body.id, 80) : slug(name);
+        const existing = await db().prepare('SELECT profile FROM competitors WHERE id=?').bind(id).first();
+        const p = existing ? JSON.parse(existing.profile) : { initial: name.slice(0, 2).toUpperCase(), tags: ['Research pending'], fact: 'User-added candidate; capabilities require validation.', assessment: 'Validate program-specific competitive overlap.', question: 'Which pursuits overlap?', matrix: [0, 0, 0, 0, 0] };
+        Object.assign(p, { name, url: website, focus: clean(body.focus || 'Candidate for research', 150) });
+        await db().prepare('INSERT INTO competitors (id,name,aliases,website,profile,active) VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,aliases=excluded.aliases,website=excluded.website,profile=excluded.profile,active=excluded.active').bind(id, name, aliases, website, JSON.stringify(p), body.active === false ? 0 : 1).run();
+        return { ok: true, id };
+    }
+    if (action === 'import' || action === 'record') {
+        const rows = action === 'record' ? [body.record] : body.rows;
+        if (!Array.isArray(rows) || !rows.length || rows.length > 500)
+            throw Error('Import 1–500 rows at a time.');
+        if (body.kind === 'competitors') {
+            const valid = rows.map((r) => { if (!clean(r.name, 100))
+                throw Error('Every competitor needs a name.'); return { ...r, website: url(r.website || r.url) }; });
+            for (const r of valid)
+                await mutate({ ...r, action: 'competitor', active: r.active !== false && r.active !== 'false' });
+            return { ok: true, count: valid.length };
+        }
+        const rowsClean = await Promise.all(rows.map(async (r) => { const title = clean(r.title, 180), company = clean(r.company, 100), summary = clean(r.summary); if (!title || !company || !summary)
+            throw Error('Every record requires title, company, summary and url.'); const sourceUrl = url(r.url), published = clean(r.published || r.date, 30); if (published && (!Number.isFinite(Date.parse(published)) || Date.parse(published) > Date.now()))
+            throw Error('Publication dates must be valid and not in the future.'); return { id: 'manual-' + await digest(company + '|' + title + '|' + sourceUrl), company, title, summary, url: sourceUrl, assessment: clean(r.assessment), published, category: clean(r.category || 'News', 60), priority: r.priority === 'High' ? 'High' : 'Normal', source: clean(r.source || 'User-supplied public source', 150), verification: 'User supplied; not independently verified', origin: 'manual', created: now() }; }));
+        await db().batch(rowsClean.map(recordStatement));
+        await rebuildEvents(false);
+        return { ok: true, count: rowsClean.length };
+    }
+    throw Error('Unsupported action.');
+}

@@ -1,0 +1,15 @@
+{
+  "name": "defense-intel",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "hosting/server.mjs",
+  "engines": {"node": ">=22.13.0"},
+  "scripts": {
+    "build": "node hosting/build.mjs --source . --output .",
+    "start": "node hosting/server.mjs",
+    "test": "node --test hosting/adapter.test.mjs hosting/mysql.test.mjs hosting/import-backup.test.mjs"
+  },
+  "dependencies": {"mysql2": "3.24.6"},
+  "devDependencies": {"typescript": "5.9.3"}
+}
