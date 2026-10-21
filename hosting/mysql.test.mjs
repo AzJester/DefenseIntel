@@ -118,10 +118,22 @@ test('An explicit provider TLS identity keeps each pooled TCP connection on its 
     assert.equal(checkServerIdentity(config.host,certificate),undefined);
     assert.equal(checkServerIdentity(environment.DB_HOST,certificate).code,'ERR_TLS_CERT_ALTNAME_INVALID');
     assert.equal(checkServerIdentity('different.example.test',certificate).code,'ERR_TLS_CERT_ALTNAME_INVALID');
-    assert.throws(()=>mysqlConfiguration({...environment,DB_HOST:'remote.example.test'}),/loopback database proxy/);
+    const remote=mysqlConfiguration({...environment,DB_HOST:'remote.example.test'});assert.equal(remote.host,environment.DB_TLS_SERVERNAME);assert.equal(remote.ssl.rejectUnauthorized,true);assert.equal(remote.ssl.verifyIdentity,true);
     assert.throws(()=>mysqlConfiguration({...environment,DB_SSL_MODE:'disable'}),/verified TLS connection/);
     for(const identity of ['localhost','127.0.0.1','::1','*.example.test','https://db.example.test','db.example.test\n','-bad.example.test','db..example.test'])assert.throws(()=>mysqlConfiguration({...environment,DB_TLS_SERVERNAME:identity}),/provider DNS identity/);
   }finally{for(const stream of streams)stream.destroy();for(const socket of sockets)socket.destroy();await new Promise(resolve=>server.close(resolve));}
+});
+
+test('Explicit TLS identity preserves remote IP and DNS transport endpoints without relaxing certificate checks',()=>{
+  for(const endpoint of ['10.20.30.40','2001:db8::25','private-proxy.example.test']){
+    const calls=[],streams=[];
+    const connectTransport=options=>{calls.push(options);const socket={setNoDelay(value){assert.equal(value,true);return this;},setKeepAlive(value){assert.equal(value,true);return this;}};streams.push(socket);return socket;};
+    const environment={NODE_ENV:'production',DB_HOST:endpoint,DB_PORT:'3307',DB_USER:'owner',DB_PASSWORD:'test-only',DB_NAME:'private_test',DB_TLS_SERVERNAME:'databaseservices.int.gdcorp.tools'};
+    const config=mysqlConfiguration(environment,connectTransport);assert.equal(config.host,environment.DB_TLS_SERVERNAME);assert.equal(config.ssl.rejectUnauthorized,true);assert.equal(config.ssl.verifyIdentity,true);
+    assert.notEqual(config.stream(),config.stream());assert.deepEqual(calls,[{host:endpoint,port:3307},{host:endpoint,port:3307}]);assert.equal(streams.length,2);
+    assert.throws(()=>mysqlConfiguration({...environment,DB_SSL_MODE:'disable'},connectTransport),/Production MySQL requires verified TLS/);
+  }
+  const calls=[],config=mysqlConfiguration({NODE_ENV:'production',DATABASE_URL:'mysql://owner:test-only@10.20.30.40:3308/private_test',DB_HOST:'ignored.example.test',DB_TLS_SERVERNAME:'databaseservices.int.gdcorp.tools'},options=>{calls.push(options);return {setNoDelay(){return this;},setKeepAlive(){return this;}};});config.stream();assert.deepEqual(calls,[{host:'10.20.30.40',port:3308}]);
 });
 
 test('MySQL migration translation retains identifiers and makes content LONGTEXT',()=>{

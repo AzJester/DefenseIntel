@@ -86,7 +86,7 @@ export function createMysqlDatabase(pool){
   return {database:raw,DB,pool,async transaction(operation){return withConnection(pool,async connection=>{await connection.beginTransaction();try{const result=await operation({dialect:'mysql',prepare:sql=>boundPrepare(connection,sql)});await connection.commit();return result;}catch(error){await connection.rollback();throw error;}});}};
 }
 
-export function mysqlConfiguration(environment){
+export function mysqlConfiguration(environment,connectTransport=connect){
   let input={};
   if(environment.DATABASE_URL){
     let url;try{url=new URL(environment.DATABASE_URL);}catch{throw Error('DATABASE_URL is invalid');}
@@ -103,13 +103,13 @@ export function mysqlConfiguration(environment){
   let transport={};
   if(environment.DB_TLS_SERVERNAME){
     const identity=environment.DB_TLS_SERVERNAME;
-    if(!local||environment.DB_SSL_MODE==='disable')throw Error('DB_TLS_SERVERNAME requires a verified TLS connection through a loopback database proxy');
+    if(environment.DB_SSL_MODE==='disable')throw Error('DB_TLS_SERVERNAME requires a verified TLS connection');
     if(typeof identity!=='string'||identity.length>253||/[^a-zA-Z0-9.-]/.test(identity)||isIP(identity)||!identity.includes('.')||!identity.split('.').every(label=>/^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$/.test(label)))throw Error('DB_TLS_SERVERNAME must be an explicit provider DNS identity');
     const proxyHost=input.host;
     // mysql2 3.24.6 uses config.host for both SNI and certificate identity. Its
-    // supported stream factory keeps TCP routing at the original local proxy.
+    // supported stream factory keeps TCP routing at the original endpoint.
     input.host=identity.toLowerCase();
-    transport={stream:()=>connect({host:proxyHost,port}).setNoDelay(true).setKeepAlive(true)};
+    transport={stream:()=>connectTransport({host:proxyHost,port}).setNoDelay(true).setKeepAlive(true)};
   }
   return {...input,port,waitForConnections:true,connectionLimit:5,queueLimit:50,connectTimeout:15000,enableKeepAlive:true,
     charset:'utf8mb4',dateStrings:true,decimalNumbers:true,supportBigNumbers:true,bigNumberStrings:false,flags:'-FOUND_ROWS',multipleStatements:false,
