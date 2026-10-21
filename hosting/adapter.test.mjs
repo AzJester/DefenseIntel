@@ -6,7 +6,7 @@ import {join,resolve,relative,isAbsolute} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createD1,applyMigrations,initializeDatabase} from './runtime.mjs';
 import {createAuth,hashPassword} from './auth.mjs';
-import {createApplication,createCollectionLock,startScheduler,phoenixSlot} from './server.mjs';
+import {createApplication,createCollectionLock,startScheduler,phoenixSlot,collectionSchedule} from './server.mjs';
 import {buildPortable} from './build.mjs';
 import {BACKUP_SCHEMA,importComplete} from './import-backup.mjs';
 import {request as httpRequest} from 'node:http';
@@ -89,14 +89,14 @@ test('Browser bridge adds writable-mode CSRF and presents sign-out only for app-
 test('Public HTTP mode permits public reads and validated ephemeral exports while preventing shared writes and backups',async()=>{
   const sql=await database(),publicDirectory=join(TEMP,'public-mode');await mkdir(publicDirectory);await writeFile(join(publicDirectory,'index.html'),'<html><head></head><body>Public workspace</body></html>');await writeFile(join(publicDirectory,'app.js'),'console.log("public app");');
   let bootstraps=0,mutations=0,refreshes=0;const record={id:'evidence-one',company:'Leidos',title:'Canonical source title',url:'https://example.test/source'};
-  const business={async bootstrap(){bootstraps++;},async workspace(){return {records:[record]};},async mutate(value){assert.equal(value.action,'snapshot_get');mutations++;return {ok:true,snapshot:{id:value.id,title:'Public saved report'}};},async refresh(){refreshes++;return {status:'ok'};},async persistCollection(){throw Error('Public ingest must not run');}};
+  const business={async bootstrap(){bootstraps++;},async workspace(){return {records:[record],schedule:{enabled:true,label:'Copied schedule claims daily collection'}};},async mutate(value){assert.equal(value.action,'snapshot_get');mutations++;return {ok:true,snapshot:{id:value.id,title:'Public saved report'}};},async refresh(){refreshes++;return {status:'ok'};},async persistCollection(){throw Error('Public ingest must not run');}};
   const environment={ACCESS_MODE:'public',PUBLIC_ORIGIN:'https://intel.insightfuldefense.com',PRIVATE_PREVIEW_URL:'https://owner-editor.preview.c38.airoapp.ai',ENABLE_SCHEDULER:'false'};
   const app=await createApplication({environment,runtime:{database:sql},publicDirectory,business}),address=await app.listen(0,'127.0.0.1'),base='http://127.0.0.1:'+address.port;
   const post=value=>fetch(base+'/api/workspace',{method:'POST',headers:{Origin:environment.PUBLIC_ORIGIN,'Content-Type':'application/json'},body:JSON.stringify(value)});
   try{
     const session=await(await fetch(base+'/auth/session')).json();assert.equal(session.mode,'public');assert.equal(session.readOnly,true);assert.equal(session.csrf,undefined);assert.equal(session.email,undefined);
     assert.equal((await fetch(base+'/auth/login',{redirect:'manual'})).status,404);assert.equal((await fetch(base+'/app.js')).status,200);assert.match(await(await fetch(base+'/')).text(),/auth\/client\.js/);
-    const workspace=await(await fetch(base+'/api/workspace')).json();assert.equal(workspace.access.readOnly,true);assert.equal(workspace.access.editorUrl,environment.PRIVATE_PREVIEW_URL);assert.equal(workspace.records[0].id,record.id);
+    const workspace=await(await fetch(base+'/api/workspace')).json();assert.equal(workspace.access.readOnly,true);assert.equal(workspace.access.editorUrl,environment.PRIVATE_PREVIEW_URL);assert.equal(workspace.records[0].id,record.id);assert.equal(workspace.schedule.enabled,false);assert.equal(workspace.schedule.label,'Automatic collection is paused here.');assert(!workspace.schedule.label.includes('Copied schedule'));
     assert.equal((await post({action:'bootstrap'})).status,200);assert.equal(bootstraps,1,'public bootstrap request must not execute business bootstrap');
     for(const action of ['capture_plan','finding','workshop','pursuit','preferences','entity','import','add_company','unknown'])assert.equal((await post({action})).status,403,action);
     for(const [path,method] of [['/api/backup','GET'],['/api/refresh','POST'],['/api/ingest','POST'],['/api/transfer/import','POST']])assert.equal((await fetch(base+path,{method,headers:{Origin:environment.PUBLIC_ORIGIN,'Content-Type':'application/json'},...(method==='POST'?{body:'{}'}:{})})).status,403,path);
@@ -176,6 +176,26 @@ test('Phoenix schedule is 07:00/13:00; persistent claims and shared lock prevent
   scheduler.stop();
   const enabled=startScheduler({database:sql,lock,refresh:async()=>{count++;return {status:'ok'};},now:()=>new Date('2026-10-21T14:00:10Z')});await new Promise(resolve=>setTimeout(resolve,10));await enabled.tick();assert.equal(count,2);enabled.stop();
   const restarted=startScheduler({database:sql,lock,refresh:async()=>{count++;return {status:'ok'};},now:()=>new Date('2026-10-21T14:00:10Z')});await new Promise(resolve=>setTimeout(resolve,10));assert.equal(count,2);restarted.stop();sql.close();
+});
+
+test('Portable schedule reports the running scheduler rather than copied workspace metadata',async()=>{
+  assert.equal(collectionSchedule(false).label,'Automatic collection is paused here.');assert.equal(collectionSchedule(false).enabled,false);
+  const active=collectionSchedule(true);assert.deepEqual(active.localTimes,['07:00','13:00']);assert.equal(active.timeZone,'America/Phoenix');assert.equal(active.requiresRunningHost,true);assert.match(active.label,/host must keep this app running/);
+  const sql=await database(),publicDirectory=join(TEMP,'schedule-public');await mkdir(publicDirectory);await writeFile(join(publicDirectory,'index.html'),'<html><head></head><body>Schedule</body></html>');
+  const business={async bootstrap(){},async workspace(){return {records:[],schedule:{enabled:false,label:'Copied paused schedule',staleField:'old host'}};},async mutate(){return {ok:true};},async refresh(){return {status:'ok'};},async persistCollection(){return {status:'ok'};}};
+  const app=await createApplication({environment:{ACCESS_MODE:'public',PUBLIC_ORIGIN:'https://intel.example.test',ENABLE_SCHEDULER:'true'},runtime:{database:sql},publicDirectory,business}),address=await app.listen(0,'127.0.0.1'),url='http://127.0.0.1:'+address.port+'/api/workspace';
+  try{const running=await(await fetch(url)).json();assert.equal(running.schedule.enabled,true);assert.deepEqual(running.schedule.localTimes,['07:00','13:00']);assert.equal(running.schedule.staleField,undefined);app.scheduler.stop();const stopped=await(await fetch(url)).json();assert.equal(stopped.schedule.enabled,false);assert.equal(stopped.schedule.label,'Automatic collection is paused here.');}
+  finally{await app.close();sql.close();}
+});
+
+test('Overview and source copy honor an explicit paused schedule and hide public owner refresh instructions',async()=>{
+  const source=(await readFile(resolve(HERE,'../public/workspace.js'),'utf8')).split('function dataView(){')[0];
+  const rendered=cloud=>runInNewContext(source+'\ncloud='+JSON.stringify({alerts:[],run:null,...cloud})+';({overview:overview(),sources:sources()});',{names:{},overview:()=>'<div>Base overview</div>',sources:()=>'',esc:value=>String(value??'')});
+  const paused=rendered({schedule:{enabled:false,label:'Daily at 07:00 and 13:00'},access:{readOnly:true}});assert.match(paused.overview,/Automatic collection is paused here\./);assert(!paused.overview.includes('Automatic collection scheduled.'));assert(!paused.overview.includes('Use Refresh intelligence'));assert(!paused.sources.includes('Refresh intelligence to populate'));assert(!paused.sources.includes('Daily at 07:00 and 13:00'));assert.match(paused.sources,/Automatic collection is paused here\./);
+  const owner=rendered({schedule:{enabled:false},access:{readOnly:false}});assert.match(owner.overview,/Use Refresh intelligence/);
+  const enabled=rendered({schedule:collectionSchedule(true),access:{readOnly:true}});assert.match(enabled.overview,/07:00 and 13:00 Arizona time/);assert.match(enabled.overview,/host must keep this app running/);assert(!enabled.overview.includes('Use Refresh intelligence'));
+  const legacy=rendered({schedule:{label:'Legacy schedule label'}});assert.match(legacy.overview,/Automatic collection scheduled\./);assert.match(legacy.sources,/Legacy schedule label/);
+  assert.match(rendered({schedule:null}).overview,/Automatic schedule is being configured\./);
 });
 
 test('Portable build rewrites imports and executes actual business modules with SQLite',async()=>{

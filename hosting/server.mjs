@@ -94,7 +94,13 @@ export function startScheduler({database,lock,refresh,enabled=true,now=()=>new D
   };
   const timer=enabled?setInterval(()=>void tick(),intervalMilliseconds):null;timer?.unref();
   if(enabled)void tick();
-  return {enabled,tick,stop(){stopped=true;if(timer)clearInterval(timer);}};
+  return {get enabled(){return enabled&&!stopped;},tick,stop(){stopped=true;if(timer)clearInterval(timer);}};
+}
+
+export function collectionSchedule(enabled){
+  const active=enabled===true;
+  return {enabled:active,timeZone:'America/Phoenix',localTimes:active?['07:00','13:00']:[],requiresRunningHost:true,
+    label:active?'Automatic collection is scheduled for 07:00 and 13:00 Arizona time (America/Phoenix). The host must keep this app running at those times.':'Automatic collection is paused here.'};
 }
 
 export async function createApplication(options={}){
@@ -142,7 +148,7 @@ export async function createApplication(options={}){
         catch(error){if(error instanceof BackupImportError)return send(response,/already contains/.test(error.message)?409:400,{error:error.message});if(error.status===413)return send(response,413,{error:'Backup must be smaller than 20 MB.'});if(error instanceof SyntaxError)return send(response,400,{error:'Backup must contain valid JSON.'});console.error('Private data transfer failed.');return send(response,500,{error:'Private data transfer did not complete; no application data was imported.'});}
       }
       if(transferPending){if(!auth.access.readOnly&&path==='/'&&['GET','HEAD'].includes(method))return send(response,200,transferHtml(auth.mode==='owner-password'),{},method==='HEAD');return send(response,503,{error:'Private data transfer is required. Import the owner backup and restart the server before opening the workspace.'});}
-      if(path==='/api/workspace'&&method==='GET')return send(response,200,{...await business.workspace(),access:auth.access});
+      if(path==='/api/workspace'&&method==='GET')return send(response,200,{...await business.workspace(),schedule:collectionSchedule(scheduler.enabled),access:auth.access});
       if(path==='/api/backup'&&method==='GET'){
         const tables={};for(const table of TRANSFER_TABLES)tables[table]=(await runtime.DB.prepare(`SELECT * FROM ${table}`).all()).results;
         return send(response,200,{schema:'defense-intelligence-transfer',version:1,exportedAt:new Date().toISOString(),tables},{'Content-Disposition':'attachment; filename="defense-intelligence-backup.json"'});
